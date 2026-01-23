@@ -250,27 +250,20 @@ class MockGitLabService:
         return "\n".join(logs)
     
     async def fetch_job_artifacts(self, project_id: int, job_id: int):
-        # Generate mock artifacts
+        # Generate mock artifacts with download URLs
         artifacts = [
             {
-                "file_type": "archive",
                 "filename": f"build-artifacts-{job_id}.zip",
                 "size": random.randint(1024, 10240000),
-                "file_format": "zip"
+                "download_url": f"https://gitlab.example.com/api/v4/projects/{project_id}/jobs/{job_id}/artifacts"
             },
             {
-                "file_type": "archive", 
                 "filename": f"test-reports-{job_id}.zip",
                 "size": random.randint(512, 5120000),
-                "file_format": "zip"
+                "download_url": f"https://gitlab.example.com/api/v4/projects/{project_id}/jobs/{job_id}/artifacts"
             }
         ]
         return artifacts
-    
-    async def download_artifact(self, project_id: int, job_id: int, artifact_name: str):
-        # Generate mock artifact content
-        mock_content = f"Mock artifact content for {artifact_name} from job {job_id}\nProject ID: {project_id}\nGenerated at: {datetime.now(timezone.utc).isoformat()}"
-        return mock_content.encode()
 
 mock_service = MockGitLabService()
 
