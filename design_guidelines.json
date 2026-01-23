@@ -1,0 +1,105 @@
+{
+  "identity": {
+    "name": "E1",
+    "archetype": "The Performance Pro (Dark Mode)",
+    "mission": "Create a high-density, precision-engineered CI/CD dashboard that feels like a cockpit for DevOps engineers."
+  },
+  "typography": {
+    "primary_font": "Inter",
+    "heading_font": "IBM Plex Sans",
+    "mono_font": "JetBrains Mono",
+    "scale": {
+      "h1": "text-4xl font-semibold tracking-tight",
+      "h2": "text-3xl font-medium tracking-tight",
+      "h3": "text-2xl font-medium",
+      "body": "text-sm leading-relaxed",
+      "small": "text-xs text-muted-foreground",
+      "code": "font-mono text-sm"
+    }
+  },
+  "colors": {
+    "theme": "dark",
+    "palette": {
+      "background": "#09090B",
+      "foreground": "#FAFAFA",
+      "card": "#18181B",
+      "card_foreground": "#FAFAFA",
+      "popover": "#18181B",
+      "popover_foreground": "#FAFAFA",
+      "primary": "#FAFAFA",
+      "primary_foreground": "#18181B",
+      "secondary": "#27272A",
+      "secondary_foreground": "#FAFAFA",
+      "muted": "#27272A",
+      "muted_foreground": "#A1A1AA",
+      "accent": "#27272A",
+      "accent_foreground": "#FAFAFA",
+      "destructive": "#7F1D1D",
+      "destructive_foreground": "#FEF2F2",
+      "border": "#27272A",
+      "input": "#27272A",
+      "ring": "#D4D4D8"
+    },
+    "semantic": {
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "error": "#EF4444",
+      "info": "#3B82F6",
+      "running": "#6366F1",
+      "skipped": "#71717A"
+    }
+  },
+  "visual_enhancers": {
+    "borders": "1px solid #27272A",
+    "radius": "0.5rem",
+    "shadows": {
+      "card": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+      "glow": "0 0 15px rgba(99, 102, 241, 0.15)"
+    },
+    "glassmorphism": "backdrop-blur-md bg-black/40 border-b border-white/10"
+  },
+  "layout_strategy": {
+    "dashboard": "Bento Grid Mode B (High Density). Use grid-cols-1 md:grid-cols-3 lg:grid-cols-4. Gap-4.",
+    "pipeline_list": "Table view with status badges, mini-sparklines for history, and quick actions.",
+    "pipeline_detail": "Header with status summary -> Horizontal DAG (Directed Acyclic Graph) -> Tabs (Jobs, Tests, Artifacts, Logs).",
+    "logs": "Full-width terminal view. Monospace. Virtualized list for performance. High contrast text.",
+    "spacing": "Generous padding inside containers (p-6), tight gaps between related data points (gap-2)."
+  },
+  "components": {
+    "buttons": "Sharp or slightly rounded (rounded-md). Primary: White text on Dark Grey. Secondary: Ghost or Outline.",
+    "cards": "Flat, border-only (border-border). No shadow by default. Hover: border-zinc-600.",
+    "badges": "Pill-shaped. Solid colors for status (Green for Success, Red for Fail).",
+    "inputs": "Flat, dark background (bg-zinc-900), border-zinc-800. Focus: ring-2 ring-indigo-500.",
+    "navigation": "Sidebar navigation. Collapsible. Icons + Text. Active state: bg-zinc-800 text-white border-r-2 border-indigo-500."
+  },
+  "image_urls": {
+    "login_background": "https://images.unsplash.com/photo-1762279388956-1c098163a2a8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGRhcmslMjB0ZWNobm9sb2d5JTIwZGF0YSUyMGZsb3d8ZW58MHx8fHwxNzY5MTc5MjM1fDA&ixlib=rb-4.1.0&q=85",
+    "empty_state_dashboard": "https://images.unsplash.com/photo-1760112783563-514867b4c2ed?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHw0fHxhYnN0cmFjdCUyMGRhcmslMjB0ZWNobm9sb2d5JTIwZGF0YSUyMGZsb3d8ZW58MHx8fHwxNzY5MTc5MjM1fDA&ixlib=rb-4.1.0&q=85",
+    "empty_state_logs": "https://images.unsplash.com/photo-1761645502922-fe3dde9f7341?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhcmslMjB0ZWNobm9sb2d5JTIwZGF0YSUyMGZsb3d8ZW58MHx8fHwxNzY5MTc5MjM1fDA&ixlib=rb-4.1.0&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Implement a 'Dark Mode First' approach. The app should default to dark mode.",
+    "Use 'IBM Plex Sans' for all headings to give a technical, dashboard feel.",
+    "Use 'JetBrains Mono' for all logs, commit hashes, and code snippets.",
+    "For the Pipeline Graph: Create a horizontal scrollable container. Use flexbox with connecting lines (SVG or CSS borders) to show the flow Stages -> Jobs.",
+    "For Logs: Implement a search bar that highlights matching text. Use a dark terminal background (#0D0D0D).",
+    "Dashboard Widgets: Create 'Pipeline Health', 'Build Duration Trends', and 'Recent Failures' widgets.",
+    "Use Shadcn UI components but override the default radius to '0.5rem' and borders to 'zinc-800'.",
+    "Ensure all interactive elements have 'data-testid' attributes.",
+    "Do not use gradients for backgrounds. Use solid dark colors with subtle borders.",
+    "Status Colors: Success = Emerald-500, Failure = Red-500, Running = Indigo-500, Pending = Zinc-500."
+  ],
+  "universal_guidelines": [
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) for sticky headers only.",
+    "You MUST NOT apply universal transition. Eg: transition: all. This results in breaking transforms.",
+    "You MUST NOT center align the app container.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Use 'sonner' for toasts."
+  ]
+}
