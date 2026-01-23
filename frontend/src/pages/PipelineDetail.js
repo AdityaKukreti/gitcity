@@ -53,6 +53,15 @@ const PipelineDetail = () => {
     }
   };
 
+  const fetchArtifacts = async () => {
+    try {
+      const response = await axios.get(`${API}/pipelines/${id}/artifacts`);
+      setArtifacts(response.data.artifacts || []);
+    } catch (error) {
+      console.error('Error fetching artifacts:', error);
+    }
+  };
+
   const fetchJobLogs = async (jobId) => {
     if (logs[jobId]) return;
 
