@@ -16,9 +16,9 @@ const Pipelines = () => {
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
-    project: '',
-    branch: '',
-    status: '',
+    project: 'all',
+    branch: 'all',
+    status: 'all',
     search: '',
   });
 
