@@ -394,7 +394,7 @@ async def sync_gitlab_data():
             pipelines = await gitlab_service.fetch_pipelines(project["id"])
             
             for pipeline in pipelines:
-                # Process logs for failed jobs
+                # Process logs for failed jobs and fetch artifacts for completed jobs
                 for job in pipeline.get('jobs', []):
                     if job['status'] == 'failed':
                         try:
@@ -407,6 +407,28 @@ async def sync_gitlab_data():
                             )
                         except Exception as e:
                             logger.error(f"Error processing logs for job {job['id']}: {e}")
+                    
+                    # Fetch and store artifacts for completed jobs
+                    if job['status'] in ['success', 'failed']:
+                        try:
+                            artifacts = await gitlab_service.fetch_job_artifacts(project["id"], job['id'])
+                            for artifact in artifacts:
+                                artifact_doc = {
+                                    "job_id": job['id'],
+                                    "pipeline_id": pipeline['id'],
+                                    "project_id": project["id"],
+                                    "filename": artifact['filename'],
+                                    "size": artifact['size'],
+                                    "file_type": artifact['file_type'],
+                                    "file_format": artifact.get('file_format', 'zip')
+                                }
+                                await db.artifacts.update_one(
+                                    {"job_id": job['id'], "filename": artifact['filename']},
+                                    {"$set": artifact_doc},
+                                    upsert=True
+                                )
+                        except Exception as e:
+                            logger.error(f"Error fetching artifacts for job {job['id']}: {e}")
                 
                 # Store pipeline
                 await db.pipelines.update_one(
