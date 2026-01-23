@@ -58,10 +58,11 @@ const Pipelines = () => {
       if (filters.status && filters.status !== 'all') params.append('status', filters.status);
 
       const response = await axios.get(`${API}/pipelines?${params.toString()}`);
-      setPipelines(response.data);
+      setPipelines(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Error fetching pipelines:', error);
       toast.error('Failed to load pipelines');
+      setPipelines([]);
     }
   };
 
