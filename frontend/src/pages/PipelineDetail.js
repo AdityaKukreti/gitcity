@@ -14,6 +14,7 @@ import {
   Ban,
   FileText,
   Package,
+  Download,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -28,11 +29,13 @@ const PipelineDetail = () => {
   const navigate = useNavigate();
   const [pipeline, setPipeline] = useState(null);
   const [logs, setLogs] = useState({});
+  const [artifacts, setArtifacts] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchPipeline();
+    fetchArtifacts();
   }, [id]);
 
   const fetchPipeline = async () => {
