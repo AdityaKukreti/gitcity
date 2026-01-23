@@ -385,6 +385,10 @@ async def sync_gitlab_data():
             pipelines = await gitlab_service.fetch_pipelines(project["id"])
             
             for pipeline in pipelines:
+                # Ensure project_name is set
+                pipeline['project_name'] = project.get('name', project.get('path', 'Unknown'))
+                pipeline['project_id'] = project['id']
+                
                 # Process logs for failed jobs and fetch artifacts for completed jobs
                 for job in pipeline.get('jobs', []):
                     if job['status'] == 'failed':
