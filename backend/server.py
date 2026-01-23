@@ -419,25 +419,11 @@ async def sync_gitlab_data():
                         except Exception as e:
                             logger.error(f"Error processing logs for job {job['id']}: {e}")
                     
-                    # Fetch and store artifacts for completed jobs
+                    # Fetch artifacts URLs only (don't download/store)
                     if job['status'] in ['success', 'failed']:
                         try:
                             artifacts = await gitlab_service.fetch_job_artifacts(project["id"], job['id'])
-                            for artifact in artifacts:
-                                artifact_doc = {
-                                    "job_id": job['id'],
-                                    "pipeline_id": pipeline['id'],
-                                    "project_id": project["id"],
-                                    "filename": artifact['filename'],
-                                    "size": artifact['size'],
-                                    "file_type": artifact['file_type'],
-                                    "file_format": artifact.get('file_format', 'zip')
-                                }
-                                await db.artifacts.update_one(
-                                    {"job_id": job['id'], "filename": artifact['filename']},
-                                    {"$set": artifact_doc},
-                                    upsert=True
-                                )
+                            job['artifacts'] = artifacts  # Store in job data
                         except Exception as e:
                             logger.error(f"Error fetching artifacts for job {job['id']}: {e}")
                 
