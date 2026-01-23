@@ -38,6 +38,28 @@ echo ""
 # Check if .env file exists
 if [ ! -f .env ]; then
     echo "📝 Creating .env file from template..."
+    
+    # Check if .env.example exists
+    if [ ! -f .env.example ]; then
+        echo "Creating .env.example file..."
+        cat > .env.example << 'ENVEOF'
+# GitLab Configuration
+GITLAB_URL=https://gitlab.example.com
+GITLAB_TOKEN=your_gitlab_token_here
+
+# Application Configuration
+USE_MOCK_DATA=true
+FETCH_INTERVAL_SECONDS=30
+
+# Frontend Configuration (update for production)
+REACT_APP_BACKEND_URL=http://localhost:8001
+
+# Database Configuration (automatically set by docker-compose)
+# MONGO_URL=mongodb://mongodb:27017
+# DB_NAME=build_inspector
+ENVEOF
+    fi
+    
     cp .env.example .env
     echo ""
     echo "⚠️  IMPORTANT: Edit .env file with your GitLab credentials!"
