@@ -85,6 +85,38 @@ const PipelineDetail = () => {
     }
   };
 
+  const handleDownloadArtifact = async (jobId, filename) => {
+    try {
+      toast.info('Downloading artifact...');
+      const response = await axios.get(`${API}/artifacts/${jobId}/download?filename=${encodeURIComponent(filename)}`, {
+        responseType: 'blob',
+      });
+      
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('Artifact downloaded successfully');
+    } catch (error) {
+      console.error('Error downloading artifact:', error);
+      toast.error('Failed to download artifact');
+    }
+  };
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'success':
