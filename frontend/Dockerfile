@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Set build-time environment variable
+ENV REACT_APP_BACKEND_URL=http://localhost:8001
+
 # Copy package files
 COPY package.json ./
 COPY yarn.lock* ./
