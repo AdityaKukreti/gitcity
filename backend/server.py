@@ -599,6 +599,42 @@ async def pipeline_action(pipeline_id: int, action: PipelineAction):
     
     return {"message": f"Action '{action.action}' not supported in current mode"}
 
+@api_router.get("/pipelines/{pipeline_id}/artifacts")
+async def get_pipeline_artifacts(pipeline_id: int):
+    """Get all artifacts for a pipeline"""
+    artifacts = await db.artifacts.find({"pipeline_id": pipeline_id}, {"_id": 0}).to_list(100)
+    return {"artifacts": artifacts}
+
+@api_router.get("/jobs/{job_id}/artifacts")
+async def get_job_artifacts(job_id: int):
+    """Get artifacts for a specific job"""
+    artifacts = await db.artifacts.find({"job_id": job_id}, {"_id": 0}).to_list(100)
+    return {"artifacts": artifacts}
+
+@api_router.get("/artifacts/{job_id}/download")
+async def download_artifact(job_id: int, filename: str = Query(...)):
+    """Download a specific artifact"""
+    # Find the artifact in database
+    artifact = await db.artifacts.find_one({"job_id": job_id, "filename": filename}, {"_id": 0})
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    
+    try:
+        # Download artifact content
+        content = await gitlab_service.download_artifact(artifact['project_id'], job_id, filename)
+        
+        # Return as streaming response
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error downloading artifact: {e}")
+        raise HTTPException(status_code=500, detail="Failed to download artifact")
+
 @api_router.post("/sync")
 async def trigger_sync():
     """Manually trigger data sync"""
