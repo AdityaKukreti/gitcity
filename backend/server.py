@@ -634,30 +634,6 @@ async def get_job_artifacts(job_id: int):
     
     return {"artifacts": []}
 
-@api_router.get("/artifacts/{job_id}/download")
-async def download_artifact(job_id: int, filename: str = Query(...)):
-    """Download a specific artifact"""
-    # Find the artifact in database
-    artifact = await db.artifacts.find_one({"job_id": job_id, "filename": filename}, {"_id": 0})
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    
-    try:
-        # Download artifact content
-        content = await gitlab_service.download_artifact(artifact['project_id'], job_id, filename)
-        
-        # Return as streaming response
-        return StreamingResponse(
-            io.BytesIO(content),
-            media_type="application/octet-stream",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}"
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error downloading artifact: {e}")
-        raise HTTPException(status_code=500, detail="Failed to download artifact")
-
 @api_router.post("/sync")
 async def trigger_sync():
     """Manually trigger data sync"""
