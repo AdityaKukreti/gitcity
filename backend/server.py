@@ -74,27 +74,28 @@ class Job(BaseModel):
     name: str
     stage: str
     status: str
-    created_at: str
+    created_at: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     duration: Optional[float] = None
-    web_url: str
+    web_url: Optional[str] = None
+    artifacts_file: Optional[Dict[str, Any]] = None
 
 class Pipeline(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: int
     project_id: int
-    project_name: str
+    project_name: Optional[str] = None
     status: str
     ref: str  # branch name
-    sha: str
-    web_url: str
-    created_at: str
-    updated_at: str
+    sha: Optional[str] = None
+    web_url: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     duration: Optional[float] = None
-    source: str
+    source: Optional[str] = None
     jobs: List[Job] = []
     test_results: Optional[TestResult] = None
 
