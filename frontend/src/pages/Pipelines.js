@@ -267,7 +267,7 @@ const Pipelines = () => {
                         </span>
                         <div>
                           <h4 className="font-heading font-medium text-foreground">
-                            {pipeline.project_name}
+                            {pipeline.project_name || 'Unknown Project'}
                           </h4>
                           <p className="text-xs text-muted-foreground mt-0.5">#{pipeline.id}</p>
                         </div>
@@ -279,12 +279,12 @@ const Pipelines = () => {
                         <span className="text-muted-foreground block mb-1">Branch</span>
                         <div className="flex items-center gap-1.5 text-foreground">
                           <GitBranch className="w-3 h-3" />
-                          <span className="font-mono text-xs">{pipeline.ref}</span>
+                          <span className="font-mono text-xs">{pipeline.ref || 'N/A'}</span>
                         </div>
                       </div>
                       <div>
                         <span className="text-muted-foreground block mb-1">Commit</span>
-                        <span className="font-mono text-xs text-foreground">{pipeline.sha.substring(0, 8)}</span>
+                        <span className="font-mono text-xs text-foreground">{pipeline.sha ? pipeline.sha.substring(0, 8) : 'N/A'}</span>
                       </div>
                       <div>
                         <span className="text-muted-foreground block mb-1">Duration</span>
@@ -292,7 +292,7 @@ const Pipelines = () => {
                       </div>
                       <div>
                         <span className="text-muted-foreground block mb-1">Source</span>
-                        <span className="text-foreground capitalize">{pipeline.source}</span>
+                        <span className="text-foreground capitalize">{pipeline.source || 'N/A'}</span>
                       </div>
                     </div>
                     {pipeline.test_results && (
