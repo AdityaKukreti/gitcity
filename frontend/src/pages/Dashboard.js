@@ -28,11 +28,14 @@ const Dashboard = () => {
       ]);
 
       setStats(statsRes.data);
-      setRecentPipelines(pipelinesRes.data);
-      setProjects(projectsRes.data);
+      setRecentPipelines(Array.isArray(pipelinesRes.data) ? pipelinesRes.data : []);
+      setProjects(Array.isArray(projectsRes.data) ? projectsRes.data : []);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       toast.error('Failed to load dashboard data');
+      // Set empty arrays on error
+      setRecentPipelines([]);
+      setProjects([]);
     } finally {
       setLoading(false);
     }
