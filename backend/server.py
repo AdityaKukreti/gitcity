@@ -330,6 +330,41 @@ class GitLabService:
             )
             response.raise_for_status()
             return response.text
+    
+    async def fetch_job_artifacts(self, project_id: int, job_id: int):
+        if USE_MOCK_DATA:
+            return await mock_service.fetch_job_artifacts(project_id, job_id)
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/api/v4/projects/{project_id}/jobs/{job_id}",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            job_data = response.json()
+            
+            artifacts = []
+            if job_data.get('artifacts'):
+                for artifact in job_data.get('artifacts', []):
+                    artifacts.append({
+                        "file_type": artifact.get('file_type', 'archive'),
+                        "filename": artifact.get('filename', 'artifact.zip'),
+                        "size": artifact.get('size', 0),
+                        "file_format": artifact.get('file_format', 'zip')
+                    })
+            return artifacts
+    
+    async def download_artifact(self, project_id: int, job_id: int, artifact_name: str):
+        if USE_MOCK_DATA:
+            return await mock_service.download_artifact(project_id, job_id, artifact_name)
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            return response.content
 
 gitlab_service = GitLabService()
 
