@@ -599,14 +599,40 @@ async def pipeline_action(pipeline_id: int, action: PipelineAction):
 @api_router.get("/pipelines/{pipeline_id}/artifacts")
 async def get_pipeline_artifacts(pipeline_id: int):
     """Get all artifacts for a pipeline"""
-    artifacts = await db.artifacts.find({"pipeline_id": pipeline_id}, {"_id": 0}).to_list(100)
+    pipeline = await db.pipelines.find_one({"id": pipeline_id}, {"_id": 0})
+    if not pipeline:
+        return {"artifacts": []}
+    
+    artifacts = []
+    for job in pipeline.get('jobs', []):
+        if job.get('artifacts'):
+            for artifact in job['artifacts']:
+                artifacts.append({
+                    **artifact,
+                    "job_id": job['id'],
+                    "job_name": job['name'],
+                    "gitlab_download_url": artifact.get('download_url')
+                })
+    
     return {"artifacts": artifacts}
 
 @api_router.get("/jobs/{job_id}/artifacts")
 async def get_job_artifacts(job_id: int):
     """Get artifacts for a specific job"""
-    artifacts = await db.artifacts.find({"job_id": job_id}, {"_id": 0}).to_list(100)
-    return {"artifacts": artifacts}
+    pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
+    if not pipeline:
+        return {"artifacts": []}
+    
+    for job in pipeline.get('jobs', []):
+        if job['id'] == job_id and job.get('artifacts'):
+            return {
+                "artifacts": [
+                    {**art, "gitlab_download_url": art.get('download_url')} 
+                    for art in job['artifacts']
+                ]
+            }
+    
+    return {"artifacts": []}
 
 @api_router.get("/artifacts/{job_id}/download")
 async def download_artifact(job_id: int, filename: str = Query(...)):
