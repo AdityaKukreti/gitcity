@@ -184,12 +184,12 @@ const Pipelines = () => {
 
           <div>
             <label className="text-sm text-muted-foreground mb-2 block">Project</label>
-            <Select value={filters.project} onValueChange={(value) => setFilters({ ...filters, project: value })}>
+            <Select value={filters.project} onValueChange={(value) => setFilters({ ...filters, project: value === 'all' ? '' : value })}>
               <SelectTrigger data-testid="project-filter">
                 <SelectValue placeholder="All projects" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All projects</SelectItem>
+                <SelectItem value="all">All projects</SelectItem>
                 {projects.map((project) => (
                   <SelectItem key={project.id} value={project.id.toString()}>
                     {project.name}
@@ -201,12 +201,12 @@ const Pipelines = () => {
 
           <div>
             <label className="text-sm text-muted-foreground mb-2 block">Branch</label>
-            <Select value={filters.branch} onValueChange={(value) => setFilters({ ...filters, branch: value })}>
+            <Select value={filters.branch} onValueChange={(value) => setFilters({ ...filters, branch: value === 'all' ? '' : value })}>
               <SelectTrigger data-testid="branch-filter">
                 <SelectValue placeholder="All branches" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All branches</SelectItem>
+                <SelectItem value="all">All branches</SelectItem>
                 {branches.map((branch) => (
                   <SelectItem key={branch} value={branch}>
                     <div className="flex items-center gap-2">
@@ -221,12 +221,12 @@ const Pipelines = () => {
 
           <div>
             <label className="text-sm text-muted-foreground mb-2 block">Status</label>
-            <Select value={filters.status} onValueChange={(value) => setFilters({ ...filters, status: value })}>
+            <Select value={filters.status} onValueChange={(value) => setFilters({ ...filters, status: value === 'all' ? '' : value })}>
               <SelectTrigger data-testid="status-filter">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All statuses</SelectItem>
+                <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="success">Success</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
                 <SelectItem value="running">Running</SelectItem>
