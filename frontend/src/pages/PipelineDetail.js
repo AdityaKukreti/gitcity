@@ -447,7 +447,7 @@ const PipelineDetail = () => {
                         </div>
                       </div>
                       <Button
-                        onClick={() => handleDownloadArtifact(artifact.job_id, artifact.filename)}
+                        onClick={() => handleDownloadArtifact(artifact.download_url, artifact.filename)}
                         variant="outline"
                         size="sm"
                         data-testid={`download-artifact-${idx}`}
