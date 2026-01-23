@@ -51,9 +51,9 @@ const Pipelines = () => {
   const fetchPipelines = async () => {
     try {
       const params = new URLSearchParams();
-      if (filters.project) params.append('project_id', filters.project);
-      if (filters.branch) params.append('branch', filters.branch);
-      if (filters.status) params.append('status', filters.status);
+      if (filters.project && filters.project !== 'all') params.append('project_id', filters.project);
+      if (filters.branch && filters.branch !== 'all') params.append('branch', filters.branch);
+      if (filters.status && filters.status !== 'all') params.append('status', filters.status);
 
       const response = await axios.get(`${API}/pipelines?${params.toString()}`);
       setPipelines(response.data);
