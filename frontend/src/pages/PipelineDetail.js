@@ -384,6 +384,9 @@ const PipelineDetail = () => {
             <TabsList data-testid="job-tabs">
               <TabsTrigger value="info" data-testid="tab-info">Job Info</TabsTrigger>
               <TabsTrigger value="logs" data-testid="tab-logs">Logs</TabsTrigger>
+              <TabsTrigger value="artifacts" data-testid="tab-artifacts">
+                Artifacts ({artifacts.filter(a => a.job_id === selectedJob.id).length})
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="info" className="mt-4" data-testid="job-info-content">
@@ -441,6 +444,44 @@ const PipelineDetail = () => {
                   </div>
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="artifacts" className="mt-4" data-testid="job-artifacts-content">
+              <div className="space-y-3">
+                {artifacts.filter(a => a.job_id === selectedJob.id).length > 0 ? (
+                  artifacts.filter(a => a.job_id === selectedJob.id).map((artifact, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-4 border border-border rounded-md hover:border-zinc-600 transition-colors"
+                      data-testid={`artifact-${idx}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Package className="w-5 h-5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{artifact.filename}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(artifact.size)} • {artifact.file_format.toUpperCase()}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        onClick={() => handleDownloadArtifact(artifact.job_id, artifact.filename)}
+                        variant="outline"
+                        size="sm"
+                        data-testid={`download-artifact-${idx}`}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Download
+                      </Button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12">
+                    <Package className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground">No artifacts available for this job</p>
+                  </div>
+                )}
+              </div>
             </TabsContent>
           </Tabs>
         </div>
