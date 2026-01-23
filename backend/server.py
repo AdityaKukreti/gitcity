@@ -30,6 +30,16 @@ USE_MOCK_DATA = os.environ.get('USE_MOCK_DATA', 'true').lower() == 'true'
 FETCH_INTERVAL = int(os.environ.get('FETCH_INTERVAL_SECONDS', '30'))
 
 app = FastAPI()
+
+# Add CORS middleware FIRST
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=['*'],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 api_router = APIRouter(prefix="/api")
 
 # Configure logging
