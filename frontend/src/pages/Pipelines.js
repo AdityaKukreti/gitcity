@@ -117,10 +117,10 @@ const Pipelines = () => {
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
       return (
-        pipeline.project_name.toLowerCase().includes(searchLower) ||
-        pipeline.ref.toLowerCase().includes(searchLower) ||
-        pipeline.sha.toLowerCase().includes(searchLower) ||
-        pipeline.id.toString().includes(searchLower)
+        (pipeline.project_name || '').toLowerCase().includes(searchLower) ||
+        (pipeline.ref || '').toLowerCase().includes(searchLower) ||
+        (pipeline.sha || '').toLowerCase().includes(searchLower) ||
+        (pipeline.id || '').toString().includes(searchLower)
       );
     }
     return true;
