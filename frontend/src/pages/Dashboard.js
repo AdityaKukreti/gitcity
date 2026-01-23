@@ -196,16 +196,16 @@ const Dashboard = () => {
                     <span className="text-sm font-medium capitalize">{pipeline.status}</span>
                   </div>
                   <span className="text-sm font-heading font-medium text-foreground">
-                    {pipeline.project_name}
+                    {pipeline.project_name || 'Unknown Project'}
                   </span>
                 </div>
                 <span className="text-xs text-muted-foreground">{formatDate(pipeline.created_at)}</span>
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
                 <span className="font-mono">#{pipeline.id}</span>
-                <span>Branch: {pipeline.ref}</span>
+                <span>Branch: {pipeline.ref || 'N/A'}</span>
                 <span>Duration: {formatDuration(pipeline.duration)}</span>
-                <span className="font-mono">{pipeline.sha.substring(0, 8)}</span>
+                <span className="font-mono">{pipeline.sha ? pipeline.sha.substring(0, 8) : 'N/A'}</span>
               </div>
             </Link>
           ))}
