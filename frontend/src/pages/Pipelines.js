@@ -37,12 +37,14 @@ const Pipelines = () => {
         axios.get(`${API}/branches`),
       ]);
 
-      setProjects(projectsRes.data);
-      setBranches(branchesRes.data.branches || []);
+      setProjects(Array.isArray(projectsRes.data) ? projectsRes.data : []);
+      setBranches(Array.isArray(branchesRes.data.branches) ? branchesRes.data.branches : []);
       await fetchPipelines();
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Failed to load data');
+      setProjects([]);
+      setBranches([]);
     } finally {
       setLoading(false);
     }
