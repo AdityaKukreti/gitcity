@@ -15,9 +15,6 @@ import {
   FileText,
   Package,
   Download,
-  Folder,
-  File,
-  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -35,13 +32,6 @@ const PipelineDetail = () => {
   const [artifacts, setArtifacts] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [ciStages, setCiStages] = useState(null);
-  const [testResults, setTestResults] = useState({});
-  const [testFilter, setTestFilter] = useState('all');
-  const [loadingTests, setLoadingTests] = useState(false);
-  const [artifactBrowser, setArtifactBrowser] = useState({});
-  const [currentPath, setCurrentPath] = useState({});
-  const [loadingArtifacts, setLoadingArtifacts] = useState({});
 
   useEffect(() => {
     fetchPipeline();
@@ -54,21 +44,6 @@ const PipelineDetail = () => {
       setPipeline(response.data);
       if (response.data.jobs && response.data.jobs.length > 0) {
         setSelectedJob(response.data.jobs[0]);
-      }
-      
-      // Fetch CI config for accurate stage ordering
-      if (response.data.project_id && response.data.ref) {
-        try {
-          const ciConfigResponse = await axios.get(
-            `${API}/projects/${response.data.project_id}/ci-config`,
-            { params: { ref: response.data.ref } }
-          );
-          if (ciConfigResponse.data.stages) {
-            setCiStages(ciConfigResponse.data.stages);
-          }
-        } catch (error) {
-          console.log('Could not fetch CI config, using default stage order');
-        }
       }
     } catch (error) {
       console.error('Error fetching pipeline:', error);
@@ -99,21 +74,6 @@ const PipelineDetail = () => {
     }
   };
 
-  const fetchJobTests = async (jobId) => {
-    if (testResults[jobId]) return;
-
-    setLoadingTests(true);
-    try {
-      const response = await axios.get(`${API}/jobs/${jobId}/tests`);
-      setTestResults((prev) => ({ ...prev, [jobId]: response.data }));
-    } catch (error) {
-      console.error('Error fetching test results:', error);
-      // Don't show error toast as tests might not be available for all jobs
-    } finally {
-      setLoadingTests(false);
-    }
-  };
-
   const handleAction = async (action) => {
     try {
       await axios.post(`${API}/pipelines/${id}/action`, { action });
@@ -125,48 +85,10 @@ const PipelineDetail = () => {
     }
   };
 
-  const browseArtifacts = async (jobId, path = '') => {
-    setLoadingArtifacts((prev) => ({ ...prev, [jobId]: true }));
-    try {
-      const response = await axios.get(`${API}/jobs/${jobId}/artifacts/browse`, {
-        params: { path }
-      });
-      setArtifactBrowser((prev) => ({ ...prev, [jobId]: response.data.files || [] }));
-      setCurrentPath((prev) => ({ ...prev, [jobId]: path }));
-    } catch (error) {
-      console.error('Error browsing artifacts:', error);
-      toast.error('Failed to browse artifacts');
-    } finally {
-      setLoadingArtifacts((prev) => ({ ...prev, [jobId]: false }));
-    }
-  };
-
   const handleDownloadArtifact = (downloadUrl, filename) => {
     // Open GitLab artifact URL in new tab
     window.open(downloadUrl, '_blank');
     toast.success('Opening artifact download...');
-  };
-
-  const handleDownloadFile = (jobId, path, filename) => {
-    // Download specific file from artifacts
-    const url = `${API}/jobs/${jobId}/artifacts/download?path=${encodeURIComponent(path)}`;
-    window.open(url, '_blank');
-    toast.success(`Downloading ${filename}...`);
-  };
-
-  const handleDownloadFullArchive = (jobId) => {
-    // Download entire artifact archive as zip
-    const url = `${API}/jobs/${jobId}/artifacts/download`;
-    window.open(url, '_blank');
-    toast.success('Downloading artifact archive...');
-  };
-
-  const handleBrowseDirectory = (jobId, path) => {
-    browseArtifacts(jobId, path);
-  };
-
-  const handleBreadcrumbClick = (jobId, path) => {
-    browseArtifacts(jobId, path);
   };
 
   const formatBytes = (bytes) => {
@@ -265,46 +187,7 @@ const PipelineDetail = () => {
     );
   }
 
-  // Get unique stages from jobs
-  const uniqueStages = [...new Set(pipeline.jobs.map((job) => job.stage))];
-  
-  // Sort stages based on CI config or standard order
-  let stages;
-  if (ciStages && ciStages.length > 0) {
-    // Use the order from .gitlab-ci.yml - preserve the exact order
-    stages = [];
-    for (const stage of ciStages) {
-      if (uniqueStages.includes(stage)) {
-        stages.push(stage);
-      }
-    }
-    // Add any stages that exist in jobs but not in CI config (at the end)
-    const missingStages = uniqueStages.filter(stage => !ciStages.includes(stage));
-    stages = [...stages, ...missingStages];
-    
-    // Reverse the order to match the expected display
-    stages.reverse();
-  } else {
-    // Fallback to standard GitLab CI/CD stage order
-    const standardStageOrder = ['build', 'test', 'deploy', 'release', 'cleanup'];
-    
-    stages = uniqueStages.sort((a, b) => {
-      const indexA = standardStageOrder.indexOf(a.toLowerCase());
-      const indexB = standardStageOrder.indexOf(b.toLowerCase());
-      
-      // If both stages are in standard order, sort by their position
-      if (indexA !== -1 && indexB !== -1) {
-        return indexA - indexB;
-      }
-      // If only A is in standard order, it comes first
-      if (indexA !== -1) return -1;
-      // If only B is in standard order, it comes first
-      if (indexB !== -1) return 1;
-      // If neither is in standard order, sort alphabetically
-      return a.localeCompare(b);
-    });
-  }
-  
+  const stages = [...new Set(pipeline.jobs.map((job) => job.stage))];
   const jobsByStage = stages.reduce((acc, stage) => {
     acc[stage] = pipeline.jobs.filter((job) => job.stage === stage);
     return acc;
@@ -483,7 +366,6 @@ const PipelineDetail = () => {
             <TabsList data-testid="job-tabs">
               <TabsTrigger value="info" data-testid="tab-info">Job Info</TabsTrigger>
               <TabsTrigger value="logs" data-testid="tab-logs">Logs</TabsTrigger>
-              <TabsTrigger value="tests" data-testid="tab-tests">Tests</TabsTrigger>
               <TabsTrigger value="artifacts" data-testid="tab-artifacts">
                 Artifacts ({artifacts.filter(a => a.job_id === selectedJob.id).length})
               </TabsTrigger>
@@ -546,215 +428,35 @@ const PipelineDetail = () => {
               )}
             </TabsContent>
 
-            <TabsContent value="tests" className="mt-4" data-testid="job-tests-content" onFocus={() => fetchJobTests(selectedJob.id)}>
-              {loadingTests ? (
-                <div className="flex items-center justify-center h-[400px]">
-                  <PlayCircle className="w-8 h-8 text-running animate-pulse" />
-                  <p className="text-muted-foreground ml-3">Loading test results...</p>
-                </div>
-              ) : testResults[selectedJob.id] && testResults[selectedJob.id].total > 0 ? (
-                <div className="space-y-4">
-                  {/* Test Summary */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <button
-                      onClick={() => setTestFilter('all')}
-                      className={`p-4 border rounded-md transition-colors ${
-                        testFilter === 'all' ? 'border-running bg-running/10' : 'border-border hover:border-zinc-600'
-                      }`}
-                    >
-                      <p className="text-sm text-muted-foreground mb-1">Total</p>
-                      <p className="text-2xl font-heading font-semibold text-foreground">
-                        {testResults[selectedJob.id].total}
-                      </p>
-                    </button>
-                    <button
-                      onClick={() => setTestFilter('passed')}
-                      className={`p-4 border rounded-md transition-colors ${
-                        testFilter === 'passed' ? 'border-success bg-success/10' : 'border-border hover:border-zinc-600'
-                      }`}
-                    >
-                      <p className="text-sm text-muted-foreground mb-1">Passed</p>
-                      <p className="text-2xl font-heading font-semibold text-success">
-                        {testResults[selectedJob.id].passed}
-                      </p>
-                    </button>
-                    <button
-                      onClick={() => setTestFilter('failed')}
-                      className={`p-4 border rounded-md transition-colors ${
-                        testFilter === 'failed' ? 'border-error bg-error/10' : 'border-border hover:border-zinc-600'
-                      }`}
-                    >
-                      <p className="text-sm text-muted-foreground mb-1">Failed</p>
-                      <p className="text-2xl font-heading font-semibold text-error">
-                        {testResults[selectedJob.id].failed}
-                      </p>
-                    </button>
-                    <button
-                      onClick={() => setTestFilter('skipped')}
-                      className={`p-4 border rounded-md transition-colors ${
-                        testFilter === 'skipped' ? 'border-warning bg-warning/10' : 'border-border hover:border-zinc-600'
-                      }`}
-                    >
-                      <p className="text-sm text-muted-foreground mb-1">Skipped</p>
-                      <p className="text-2xl font-heading font-semibold text-muted-foreground">
-                        {testResults[selectedJob.id].skipped}
-                      </p>
-                    </button>
-                  </div>
-
-                  {/* Test List */}
-                  <ScrollArea className="h-[400px]">
-                    <div className="space-y-2">
-                      {testResults[selectedJob.id].tests
-                        .filter(test => testFilter === 'all' || test.status === testFilter)
-                        .map((test, idx) => (
-                          <div
-                            key={idx}
-                            className="p-4 border border-border rounded-md hover:border-zinc-600 transition-colors"
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                {test.status === 'passed' && <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />}
-                                {test.status === 'failed' && <XCircle className="w-4 h-4 text-error flex-shrink-0" />}
-                                {test.status === 'skipped' && <Clock className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
-                                <div>
-                                  <p className="text-sm font-medium text-foreground">{test.name}</p>
-                                  {test.classname && (
-                                    <p className="text-xs text-muted-foreground font-mono mt-1">{test.classname}</p>
-                                  )}
-                                </div>
-                              </div>
-                              <span className="text-xs text-muted-foreground whitespace-nowrap ml-4">
-                                {test.duration ? `${test.duration.toFixed(2)}s` : 'N/A'}
-                              </span>
-                            </div>
-                            {test.failure_message && (
-                              <div className="mt-2 p-3 bg-destructive/10 border border-destructive/30 rounded-md">
-                                <p className="text-xs font-mono text-error whitespace-pre-wrap">{test.failure_message}</p>
-                              </div>
-                            )}
-                            {test.skip_message && (
-                              <div className="mt-2 p-3 bg-muted/50 border border-border rounded-md">
-                                <p className="text-xs text-muted-foreground">{test.skip_message}</p>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                    </div>
-                  </ScrollArea>
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No test results available for this job</p>
-                  <p className="text-xs text-muted-foreground mt-2">JUnit XML reports not found in artifacts</p>
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="artifacts" className="mt-4" data-testid="job-artifacts-content" onFocus={() => browseArtifacts(selectedJob.id, '')}>
+            <TabsContent value="artifacts" className="mt-4" data-testid="job-artifacts-content">
               <div className="space-y-3">
                 {artifacts.filter(a => a.job_id === selectedJob.id).length > 0 ? (
-                  <>
-                    {/* Download Full Archive Button */}
-                    <div className="flex justify-end mb-4">
+                  artifacts.filter(a => a.job_id === selectedJob.id).map((artifact, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-4 border border-border rounded-md hover:border-zinc-600 transition-colors"
+                      data-testid={`artifact-${idx}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Package className="w-5 h-5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{artifact.filename}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(artifact.size)} • {artifact.file_format ? artifact.file_format.toUpperCase() : 'N/A'}
+                          </p>
+                        </div>
+                      </div>
                       <Button
-                        onClick={() => handleDownloadFullArchive(selectedJob.id)}
-                        variant="default"
+                        onClick={() => handleDownloadArtifact(artifact.download_url, artifact.filename)}
+                        variant="outline"
                         size="sm"
+                        data-testid={`download-artifact-${idx}`}
                       >
                         <Download className="w-4 h-4 mr-2" />
-                        Download Full Archive (ZIP)
+                        Download
                       </Button>
                     </div>
-
-                    {/* Breadcrumb Navigation */}
-                    {currentPath[selectedJob.id] && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
-                        <button
-                          onClick={() => handleBreadcrumbClick(selectedJob.id, '')}
-                          className="hover:text-foreground transition-colors"
-                        >
-                          Root
-                        </button>
-                        {currentPath[selectedJob.id].split('/').filter(Boolean).map((part, idx, arr) => {
-                          const path = arr.slice(0, idx + 1).join('/');
-                          return (
-                            <React.Fragment key={idx}>
-                              <ChevronRight className="w-4 h-4" />
-                              <button
-                                onClick={() => handleBreadcrumbClick(selectedJob.id, path)}
-                                className="hover:text-foreground transition-colors"
-                              >
-                                {part}
-                              </button>
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* File Browser */}
-                    {loadingArtifacts[selectedJob.id] ? (
-                      <div className="flex items-center justify-center py-12">
-                        <PlayCircle className="w-8 h-8 text-running animate-pulse" />
-                        <p className="text-muted-foreground ml-3">Loading artifacts...</p>
-                      </div>
-                    ) : artifactBrowser[selectedJob.id] && artifactBrowser[selectedJob.id].length > 0 ? (
-                      <ScrollArea className="h-[400px]">
-                        <div className="space-y-2">
-                          {artifactBrowser[selectedJob.id].map((file, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between p-3 border border-border rounded-md hover:border-zinc-600 transition-colors cursor-pointer"
-                              onClick={() => {
-                                if (file.type === 'directory') {
-                                  handleBrowseDirectory(selectedJob.id, file.path);
-                                }
-                              }}
-                            >
-                              <div className="flex items-center gap-3">
-                                {file.type === 'directory' ? (
-                                  <Folder className="w-5 h-5 text-blue-500" />
-                                ) : (
-                                  <File className="w-5 h-5 text-muted-foreground" />
-                                )}
-                                <div>
-                                  <p className="text-sm font-medium text-foreground">{file.name}</p>
-                                  {file.type === 'file' && file.size !== undefined && (
-                                    <p className="text-xs text-muted-foreground">
-                                      {formatBytes(file.size)}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-                              {file.type === 'file' && (
-                                <Button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDownloadFile(selectedJob.id, file.path, file.name);
-                                  }}
-                                  variant="outline"
-                                  size="sm"
-                                >
-                                  <Download className="w-4 h-4 mr-2" />
-                                  Download
-                                </Button>
-                              )}
-                              {file.type === 'directory' && (
-                                <ChevronRight className="w-5 h-5 text-muted-foreground" />
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    ) : (
-                      <div className="text-center py-12">
-                        <Package className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                        <p className="text-muted-foreground">Click on a job to browse artifacts</p>
-                      </div>
-                    )}
-                  </>
+                  ))
                 ) : (
                   <div className="text-center py-12">
                     <Package className="w-12 h-12 text-muted-foreground mx-auto mb-4" />

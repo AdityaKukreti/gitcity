@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Filter, RefreshCw, GitBranch, Search, Check, ChevronsUpDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -26,16 +26,9 @@ const Pipelines = () => {
   });
   const [projectOpen, setProjectOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     fetchData();
-    
-    // Check for project query parameter
-    const projectParam = searchParams.get('project');
-    if (projectParam) {
-      setFilters(prev => ({ ...prev, project: projectParam }));
-    }
   }, []);
 
   useEffect(() => {

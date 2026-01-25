@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Save, RefreshCw, CheckCircle2, Info, Search } from 'lucide-react';
+import { Save, RefreshCw, CheckCircle2, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -19,66 +18,6 @@ const Settings = () => {
     fetchInterval: 30,
   });
   const [saved, setSaved] = useState(false);
-  const [projects, setProjects] = useState([]);
-  const [enabledProjects, setEnabledProjects] = useState([]);
-  const [loadingProjects, setLoadingProjects] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  useEffect(() => {
-    fetchProjects();
-    fetchEnabledProjects();
-  }, []);
-
-  const fetchProjects = async () => {
-    try {
-      const response = await axios.get(`${API}/projects`);
-      setProjects(Array.isArray(response.data) ? response.data : []);
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-      toast.error('Failed to load projects');
-    } finally {
-      setLoadingProjects(false);
-    }
-  };
-
-  const fetchEnabledProjects = async () => {
-    try {
-      const response = await axios.get(`${API}/settings/enabled-projects`);
-      setEnabledProjects(response.data.enabled_projects || []);
-    } catch (error) {
-      console.error('Error fetching enabled projects:', error);
-    }
-  };
-
-  const handleProjectToggle = (projectId) => {
-    setEnabledProjects(prev => {
-      if (prev.includes(projectId)) {
-        return prev.filter(id => id !== projectId);
-      } else {
-        return [...prev, projectId];
-      }
-    });
-  };
-
-  const handleSaveProjects = async () => {
-    try {
-      await axios.post(`${API}/settings/enabled-projects`, enabledProjects);
-      toast.success('Project settings saved successfully!');
-    } catch (error) {
-      console.error('Error saving project settings:', error);
-      toast.error('Failed to save project settings');
-    }
-  };
-
-  // Filter projects based on search query
-  const filteredProjects = projects.filter(project => {
-    const query = searchQuery.toLowerCase();
-    return (
-      project.name.toLowerCase().includes(query) ||
-      project.path.toLowerCase().includes(query) ||
-      (project.description && project.description.toLowerCase().includes(query))
-    );
-  });
 
   const handleSave = () => {
     // In a real implementation, this would save to backend
@@ -211,104 +150,6 @@ const Settings = () => {
         </div>
       </div>
 
-      {/* Repository Selection */}
-      <div className="stat-card" data-testid="repository-selection">
-        <h2 className="text-2xl font-heading font-medium mb-4">Repository Selection</h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Select which repositories to monitor. Only checked repositories will have their data fetched and displayed in the dashboard.
-        </p>
-        
-        {loadingProjects ? (
-          <div className="text-center py-8">
-            <RefreshCw className="w-8 h-8 text-running animate-spin mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">Loading repositories...</p>
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="text-center py-8">
-            <Info className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No repositories found. Please sync data first.</p>
-          </div>
-        ) : (
-          <>
-            {/* Search Bar */}
-            <div className="mb-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  type="text"
-                  placeholder="Search repositories by name, path, or description..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                  data-testid="repo-search-input"
-                />
-              </div>
-            </div>
-
-            {filteredProjects.length === 0 ? (
-              <div className="text-center py-8">
-                <Info className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  No repositories match your search criteria.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {filteredProjects.map((project) => (
-                <div
-                  key={project.id}
-                  className="flex items-start space-x-3 p-3 border border-border rounded-md hover:bg-secondary/50 transition-colors"
-                  data-testid={`project-checkbox-${project.id}`}
-                >
-                  <Checkbox
-                    id={`project-${project.id}`}
-                    checked={enabledProjects.includes(project.id)}
-                    onCheckedChange={() => handleProjectToggle(project.id)}
-                  />
-                  <div className="flex-1">
-                    <label
-                      htmlFor={`project-${project.id}`}
-                      className="text-sm font-medium text-foreground cursor-pointer"
-                    >
-                      {project.name}
-                    </label>
-                    <p className="text-xs text-muted-foreground mt-0.5">{project.path}</p>
-                    {project.description && (
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{project.description}</p>
-                    )}
-                  </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                {enabledProjects.length} of {projects.length} repositories selected
-                {searchQuery && ` (${filteredProjects.length} shown)`}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEnabledProjects(projects.map(p => p.id))}
-                  data-testid="select-all-button"
-                >
-                  Select All
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEnabledProjects([])}
-                  data-testid="deselect-all-button"
-                >
-                  Deselect All
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
       {/* Actions */}
       <div className="flex items-center gap-4">
         <Button onClick={handleSave} data-testid="save-button">
@@ -327,10 +168,6 @@ const Settings = () => {
         <Button variant="outline" onClick={handleTest} data-testid="test-button">
           <RefreshCw className="w-4 h-4 mr-2" />
           Test Connection
-        </Button>
-        <Button onClick={handleSaveProjects} data-testid="save-projects-button">
-          <Save className="w-4 h-4 mr-2" />
-          Save Repository Settings
         </Button>
       </div>
     </div>

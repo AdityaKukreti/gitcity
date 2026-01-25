@@ -12,8 +12,6 @@ const Dashboard = () => {
   const [recentPipelines, setRecentPipelines] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedStatus, setSelectedStatus] = useState('all');
-  const [showAllProjects, setShowAllProjects] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -26,7 +24,7 @@ const Dashboard = () => {
       const [statsRes, pipelinesRes, projectsRes] = await Promise.all([
         axios.get(`${API}/stats`),
         axios.get(`${API}/pipelines?limit=10`),
-        axios.get(`${API}/projects?enabled_only=true`),
+        axios.get(`${API}/projects`),
       ]);
 
       setStats(statsRes.data);
@@ -42,16 +40,6 @@ const Dashboard = () => {
       setLoading(false);
     }
   };
-
-  const handleStatusClick = (status) => {
-    setSelectedStatus(status);
-  };
-
-  const filteredPipelines = selectedStatus === 'all' 
-    ? recentPipelines 
-    : recentPipelines.filter(p => p.status === selectedStatus);
-
-  const displayedProjects = showAllProjects ? projects : projects.slice(0, 18);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -124,11 +112,7 @@ const Dashboard = () => {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="stats-grid">
-        <div 
-          className={`stat-card cursor-pointer transition-all ${selectedStatus === 'all' ? 'ring-2 ring-running' : 'hover:border-zinc-600'}`}
-          onClick={() => handleStatusClick('all')}
-          data-testid="stat-total"
-        >
+        <div className="stat-card" data-testid="stat-total">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">Total Pipelines</span>
             <Activity className="w-5 h-5 text-muted-foreground" />
@@ -136,11 +120,7 @@ const Dashboard = () => {
           <p className="text-3xl font-heading font-semibold">{stats?.total || 0}</p>
         </div>
 
-        <div 
-          className={`stat-card cursor-pointer transition-all ${selectedStatus === 'success' ? 'ring-2 ring-success' : 'hover:border-zinc-600'}`}
-          onClick={() => handleStatusClick('success')}
-          data-testid="stat-success"
-        >
+        <div className="stat-card" data-testid="stat-success">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">Success</span>
             <CheckCircle2 className="w-5 h-5 text-success" />
@@ -149,11 +129,7 @@ const Dashboard = () => {
           <p className="text-xs text-muted-foreground mt-1">{stats?.success_rate || 0}% success rate</p>
         </div>
 
-        <div 
-          className={`stat-card cursor-pointer transition-all ${selectedStatus === 'failed' ? 'ring-2 ring-error' : 'hover:border-zinc-600'}`}
-          onClick={() => handleStatusClick('failed')}
-          data-testid="stat-failed"
-        >
+        <div className="stat-card" data-testid="stat-failed">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">Failed</span>
             <XCircle className="w-5 h-5 text-error" />
@@ -161,11 +137,7 @@ const Dashboard = () => {
           <p className="text-3xl font-heading font-semibold text-error">{stats?.failed || 0}</p>
         </div>
 
-        <div 
-          className={`stat-card cursor-pointer transition-all ${selectedStatus === 'running' ? 'ring-2 ring-running' : 'hover:border-zinc-600'}`}
-          onClick={() => handleStatusClick('running')}
-          data-testid="stat-running"
-        >
+        <div className="stat-card" data-testid="stat-running">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">Running</span>
             <PlayCircle className="w-5 h-5 text-running" />
@@ -181,10 +153,9 @@ const Dashboard = () => {
           <span className="text-sm text-muted-foreground">{projects.length} active</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {displayedProjects.map((project) => (
-            <Link
+          {projects.map((project) => (
+            <div
               key={project.id}
-              to={`/pipelines?project=${project.id}`}
               className="p-4 border border-border rounded-md hover:border-zinc-600 transition-colors"
               data-testid={`project-${project.id}`}
             >
@@ -193,28 +164,15 @@ const Dashboard = () => {
               {project.description && (
                 <p className="text-sm text-muted-foreground line-clamp-2">{project.description}</p>
               )}
-            </Link>
+            </div>
           ))}
         </div>
-        {projects.length > 18 && (
-          <div className="mt-4 text-center">
-            <button
-              onClick={() => setShowAllProjects(!showAllProjects)}
-              className="text-sm text-running hover:text-running/80 transition-colors"
-              data-testid="toggle-projects-button"
-            >
-              {showAllProjects ? 'Show Less ↑' : `View More (${projects.length - 18} more) →`}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Recent Pipelines */}
       <div className="stat-card" data-testid="recent-pipelines-section">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-heading font-medium">
-            {selectedStatus === 'all' ? 'Recent Pipelines' : `${selectedStatus.charAt(0).toUpperCase() + selectedStatus.slice(1)} Pipelines`}
-          </h2>
+          <h2 className="text-2xl font-heading font-medium">Recent Pipelines</h2>
           <Link
             to="/pipelines"
             className="text-sm text-running hover:text-running/80 transition-colors"
@@ -223,13 +181,8 @@ const Dashboard = () => {
             View all →
           </Link>
         </div>
-        {filteredPipelines.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-muted-foreground">No {selectedStatus === 'all' ? '' : selectedStatus} pipelines found</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredPipelines.map((pipeline) => (
+        <div className="space-y-3">
+          {recentPipelines.map((pipeline) => (
             <Link
               key={pipeline.id}
               to={`/pipelines/${pipeline.id}`}
@@ -256,8 +209,7 @@ const Dashboard = () => {
               </div>
             </Link>
           ))}
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -11,7 +11,6 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import httpx
-import asyncio
 import re
 import random
 import io
@@ -35,7 +34,6 @@ FETCH_INTERVAL = int(os.environ.get('FETCH_INTERVAL_SECONDS', '30'))
 
 # Global flag to track if initial sync is complete
 initial_sync_complete = False
-background_sync_running = False
 
 app = FastAPI()
 
@@ -397,176 +395,6 @@ class GitLabService:
                     "download_url": f"{self.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts"
                 })
             return artifacts
-    
-    async def fetch_job_junit_report(self, project_id: int, job_id: int):
-        """Fetch and parse JUnit test report from job artifacts"""
-        if USE_MOCK_DATA:
-            # Return mock test data
-            return {
-                "total": 25,
-                "passed": 20,
-                "failed": 3,
-                "skipped": 2,
-                "tests": [
-                    {"name": "test_user_login", "classname": "tests.auth.TestAuth", "status": "passed", "duration": 0.5},
-                    {"name": "test_user_logout", "classname": "tests.auth.TestAuth", "status": "passed", "duration": 0.3},
-                    {"name": "test_invalid_credentials", "classname": "tests.auth.TestAuth", "status": "failed", "duration": 0.2, "failure_message": "AssertionError: Expected 401, got 200"},
-                    {"name": "test_database_connection", "classname": "tests.db.TestDatabase", "status": "passed", "duration": 1.2},
-                    {"name": "test_api_endpoint", "classname": "tests.api.TestAPI", "status": "skipped", "duration": 0.0, "skip_message": "Feature not implemented yet"},
-                ]
-            }
-        
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                # Download the artifacts archive
-                response = await client.get(
-                    f"{self.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
-                    headers=self.headers,
-                    follow_redirects=True
-                )
-                response.raise_for_status()
-                
-                logger.info(f"Downloaded artifacts for job {job_id}, size: {len(response.content)} bytes, content-type: {response.headers.get('content-type')}")
-                
-                # Parse the zip file to find JUnit XML files
-                import zipfile
-                import xml.etree.ElementTree as ET
-                from io import BytesIO
-                
-                test_results = {
-                    "total": 0,
-                    "passed": 0,
-                    "failed": 0,
-                    "skipped": 0,
-                    "tests": []
-                }
-                
-                try:
-                    zip_data = BytesIO(response.content)
-                    with zipfile.ZipFile(zip_data, 'r') as zip_file:
-                        file_list = zip_file.namelist()
-                        logger.info(f"Files in artifact archive: {file_list}")
-                        
-                        # Look for JUnit XML files (common patterns)
-                        junit_patterns = ['junit', 'test-result', 'test_result', 'TEST-', 'report']
-                        
-                        for file_info in file_list:
-                            file_lower = file_info.lower()
-                            # Check if file is XML and matches JUnit patterns
-                            if file_info.endswith('.xml') and any(pattern in file_lower for pattern in junit_patterns):
-                                logger.info(f"Found potential JUnit file: {file_info}")
-                                try:
-                                    xml_content = zip_file.read(file_info)
-                                    root = ET.fromstring(xml_content)
-                                    
-                                    # Parse JUnit XML format - handle both testsuite and testsuites root
-                                    testsuites = root.findall('.//testsuite') if root.tag != 'testsuite' else [root]
-                                    
-                                    for testsuite in testsuites:
-                                        for testcase in testsuite.findall('testcase'):
-                                            test_name = testcase.get('name', 'Unknown')
-                                            classname = testcase.get('classname', '')
-                                            duration = float(testcase.get('time', 0))
-                                            
-                                            # Determine test status
-                                            failure = testcase.find('failure')
-                                            error = testcase.find('error')
-                                            skipped = testcase.find('skipped')
-                                            
-                                            if failure is not None:
-                                                status = 'failed'
-                                                test_results['failed'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration,
-                                                    "failure_message": failure.get('message', failure.text or 'No message')
-                                                })
-                                            elif error is not None:
-                                                status = 'failed'
-                                                test_results['failed'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration,
-                                                    "failure_message": error.get('message', error.text or 'No message')
-                                                })
-                                            elif skipped is not None:
-                                                status = 'skipped'
-                                                test_results['skipped'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration,
-                                                    "skip_message": skipped.get('message', skipped.text or 'No message')
-                                                })
-                                            else:
-                                                status = 'passed'
-                                                test_results['passed'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration
-                                                })
-                                            
-                                            test_results['total'] += 1
-                                    
-                                    logger.info(f"Parsed {test_results['total']} tests from {file_info}")
-                                except ET.ParseError as e:
-                                    logger.warning(f"XML parse error in {file_info}: {e}")
-                                    continue
-                                except Exception as e:
-                                    logger.warning(f"Error parsing JUnit XML file {file_info}: {e}")
-                                    continue
-                        
-                        if test_results['total'] == 0:
-                            logger.warning(f"No JUnit test results found in artifacts for job {job_id}")
-                
-                except zipfile.BadZipFile:
-                    logger.error(f"Artifacts for job {job_id} is not a valid ZIP file")
-                    return None
-                
-                return test_results if test_results['total'] > 0 else None
-                
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching artifacts for job {job_id}: {e.response.status_code}")
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching JUnit report for job {job_id}: {e}")
-            return None
-    
-    async def fetch_gitlab_ci_config(self, project_id: int, ref: str = None):
-        """Fetch .gitlab-ci.yml file from a project to get stage order"""
-        if USE_MOCK_DATA:
-            # Return mock stage order
-            return ["build", "test", "deploy"]
-        
-        try:
-            params = {"ref": ref or DEFAULT_BRANCH}
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v4/projects/{project_id}/repository/files/.gitlab-ci.yml/raw",
-                    headers=self.headers,
-                    params=params
-                )
-                response.raise_for_status()
-                
-                # Parse YAML to extract stages
-                import yaml
-                config = yaml.safe_load(response.text)
-                
-                # Get stages from the config
-                if config and 'stages' in config:
-                    return config['stages']
-                
-                return None
-        except Exception as e:
-            logger.warning(f"Could not fetch .gitlab-ci.yml for project {project_id}: {e}")
-            return None
 
 gitlab_service = GitLabService()
 
@@ -587,11 +415,7 @@ async def sync_gitlab_data():
             initial_sync_complete = True
             return
         
-        # Get enabled projects from settings
-        enabled_projects_doc = await db.settings.find_one({"key": "enabled_projects"})
-        enabled_projects = enabled_projects_doc.get("value", []) if enabled_projects_doc else []
-        
-        # Store all projects (for settings page)
+        # Store projects
         for project in projects:
             await db.projects.update_one(
                 {"id": project["id"]},
@@ -601,21 +425,15 @@ async def sync_gitlab_data():
         
         logger.info(f"Synced {len(projects)} projects from '{GITLAB_NAMESPACE}' namespace")
         
-        # Calculate date threshold for fetching pipelines (last 24 hours)
-        date_threshold = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        
-        # Filter projects based on settings (if any enabled projects are set)
-        projects_to_fetch = projects
-        if enabled_projects:
-            projects_to_fetch = [p for p in projects if p["id"] in enabled_projects]
-            logger.info(f"Fetching data for {len(projects_to_fetch)} enabled projects")
+        # Calculate date threshold for fetching pipelines (past N days)
+        date_threshold = (datetime.now(timezone.utc) - timedelta(days=DAYS_TO_FETCH)).isoformat()
         
         # Fetch pipelines for each project
         total_pipelines = 0
-        for project in projects_to_fetch:
+        for project in projects:
             logger.info(f"Fetching pipelines for project: {project.get('name')} (ID: {project['id']})")
             
-            # Fetch pipelines for the default branch from the last 24 hours
+            # Fetch pipelines for the default branch from the past N days
             pipelines = await gitlab_service.fetch_pipelines(
                 project["id"], 
                 ref=DEFAULT_BRANCH,
@@ -659,26 +477,12 @@ async def sync_gitlab_data():
                 )
                 total_pipelines += 1
         
-        logger.info(f"Synced {total_pipelines} pipelines from the last 24 hours on branch '{DEFAULT_BRANCH}'")
+        logger.info(f"Synced {total_pipelines} pipelines from the past {DAYS_TO_FETCH} days on branch '{DEFAULT_BRANCH}'")
         initial_sync_complete = True
         
     except Exception as e:
         logger.error(f"Error syncing GitLab data: {e}")
         initial_sync_complete = True  # Set to true even on error to prevent blocking
-
-async def continuous_sync():
-    """Continuously sync data in the background"""
-    global background_sync_running
-    background_sync_running = True
-    
-    while background_sync_running:
-        try:
-            await asyncio.sleep(FETCH_INTERVAL)
-            logger.info("Running scheduled data sync...")
-            await sync_gitlab_data()
-        except Exception as e:
-            logger.error(f"Error in continuous sync: {e}")
-            await asyncio.sleep(FETCH_INTERVAL)
 
 def process_logs(log_text: str, job_id: int, pipeline_id: int) -> dict:
     """Process logs to highlight errors"""
@@ -719,21 +523,16 @@ scheduler = AsyncIOScheduler()
 @app.on_event("startup")
 async def startup_event():
     logger.info("Backend startup initiated")
-    logger.info(f"Configuration: Namespace='{GITLAB_NAMESPACE}', Branch='{DEFAULT_BRANCH}', Fetch Interval={FETCH_INTERVAL}s")
+    logger.info(f"Configuration: Namespace='{GITLAB_NAMESPACE}', Branch='{DEFAULT_BRANCH}', Days={DAYS_TO_FETCH}")
     
     # Trigger initial sync on startup
     import asyncio
     asyncio.create_task(sync_gitlab_data())
     
-    # Start continuous background sync
-    asyncio.create_task(continuous_sync())
-    
-    logger.info("Initial data sync and continuous background sync started")
+    logger.info("Initial data sync started in background")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global background_sync_running
-    background_sync_running = False
     scheduler.shutdown()
     client.close()
 
@@ -754,22 +553,8 @@ async def get_sync_status():
     }
 
 @api_router.get("/projects", response_model=List[Project])
-async def get_projects(enabled_only: bool = Query(False)):
-    if enabled_only:
-        # Get enabled projects from settings
-        enabled_projects_doc = await db.settings.find_one({"key": "enabled_projects"})
-        enabled_projects = enabled_projects_doc.get("value", []) if enabled_projects_doc else []
-        
-        if enabled_projects:
-            projects = await db.projects.find(
-                {"id": {"$in": enabled_projects}}, 
-                {"_id": 0}
-            ).to_list(1000)
-        else:
-            projects = await db.projects.find({}, {"_id": 0}).to_list(1000)
-    else:
-        projects = await db.projects.find({}, {"_id": 0}).to_list(1000)
-    
+async def get_projects():
+    projects = await db.projects.find({}, {"_id": 0}).to_list(1000)
     return projects
 
 @api_router.get("/pipelines", response_model=List[Pipeline])
@@ -780,17 +565,8 @@ async def get_pipelines(
     limit: int = Query(50, le=200)
 ):
     query = {}
-    
-    # Apply enabled projects filter if no specific project is requested
-    if not project_id:
-        enabled_projects_doc = await db.settings.find_one({"key": "enabled_projects"})
-        enabled_projects = enabled_projects_doc.get("value", []) if enabled_projects_doc else []
-        
-        if enabled_projects:
-            query["project_id"] = {"$in": enabled_projects}
-    else:
+    if project_id:
         query["project_id"] = project_id
-    
     if branch:
         query["ref"] = branch
     if status:
@@ -833,21 +609,12 @@ async def get_pipeline_logs(pipeline_id: int, job_id: Optional[int] = Query(None
     return logs
 
 @api_router.get("/stats", response_model=PipelineStats)
-async def get_stats(status: Optional[str] = Query(None)):
-    # Get enabled projects filter
-    enabled_projects_doc = await db.settings.find_one({"key": "enabled_projects"})
-    enabled_projects = enabled_projects_doc.get("value", []) if enabled_projects_doc else []
-    
-    # Build base query
-    base_query = {}
-    if enabled_projects:
-        base_query["project_id"] = {"$in": enabled_projects}
-    
-    total = await db.pipelines.count_documents(base_query)
-    success = await db.pipelines.count_documents({**base_query, "status": "success"})
-    failed = await db.pipelines.count_documents({**base_query, "status": "failed"})
-    running = await db.pipelines.count_documents({**base_query, "status": "running"})
-    pending = await db.pipelines.count_documents({**base_query, "status": "pending"})
+async def get_stats():
+    total = await db.pipelines.count_documents({})
+    success = await db.pipelines.count_documents({"status": "success"})
+    failed = await db.pipelines.count_documents({"status": "failed"})
+    running = await db.pipelines.count_documents({"status": "running"})
+    pending = await db.pipelines.count_documents({"status": "pending"})
     
     success_rate = (success / total * 100) if total > 0 else 0
     
@@ -922,257 +689,10 @@ async def get_job_artifacts(job_id: int):
     
     return {"artifacts": []}
 
-@api_router.get("/jobs/{job_id}/artifacts/browse")
-async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
-    """Browse files within job artifacts"""
-    # Find the pipeline containing this job
-    pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
-    if not pipeline:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    project_id = pipeline.get('project_id')
-    
-    if USE_MOCK_DATA:
-        # Return mock artifact file structure
-        if not path:
-            return {
-                "files": [
-                    {"name": "test-results", "type": "directory", "path": "test-results"},
-                    {"name": "coverage", "type": "directory", "path": "coverage"},
-                    {"name": "build.log", "type": "file", "path": "build.log", "size": 1024},
-                ]
-            }
-        elif path == "test-results":
-            return {
-                "files": [
-                    {"name": "junit.xml", "type": "file", "path": "test-results/junit.xml", "size": 2048},
-                    {"name": "test-report.html", "type": "file", "path": "test-results/test-report.html", "size": 4096},
-                ]
-            }
-        elif path == "coverage":
-            return {
-                "files": [
-                    {"name": "index.html", "type": "file", "path": "coverage/index.html", "size": 8192},
-                    {"name": "coverage.xml", "type": "file", "path": "coverage/coverage.xml", "size": 3072},
-                ]
-            }
-        return {"files": []}
-    
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Download the artifacts archive
-            response = await client.get(
-                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
-                headers=gitlab_service.headers,
-                follow_redirects=True
-            )
-            response.raise_for_status()
-            
-            # Parse the zip file to list contents
-            import zipfile
-            from io import BytesIO
-            
-            try:
-                zip_data = BytesIO(response.content)
-                with zipfile.ZipFile(zip_data, 'r') as zip_file:
-                    all_files = zip_file.namelist()
-                    
-                    # Filter files based on path
-                    if path:
-                        # Normalize path
-                        normalized_path = path.rstrip('/') + '/'
-                        filtered_files = [f for f in all_files if f.startswith(normalized_path)]
-                    else:
-                        filtered_files = all_files
-                    
-                    # Build directory structure
-                    files = []
-                    seen = set()
-                    
-                    for file_path in filtered_files:
-                        # Remove the base path if specified
-                        if path:
-                            relative_path = file_path[len(path):].lstrip('/')
-                        else:
-                            relative_path = file_path
-                        
-                        if not relative_path:
-                            continue
-                        
-                        # Get the first component (file or directory)
-                        parts = relative_path.split('/')
-                        first_component = parts[0]
-                        
-                        if first_component in seen:
-                            continue
-                        seen.add(first_component)
-                        
-                        # Determine if it's a file or directory
-                        full_path = f"{path}/{first_component}" if path else first_component
-                        is_directory = len(parts) > 1 or file_path.endswith('/')
-                        
-                        file_info = {
-                            "name": first_component,
-                            "type": "directory" if is_directory else "file",
-                            "path": full_path.rstrip('/')
-                        }
-                        
-                        # Add size for files
-                        if not is_directory:
-                            try:
-                                file_info["size"] = zip_file.getinfo(file_path).file_size
-                            except:
-                                file_info["size"] = 0
-                        
-                        files.append(file_info)
-                    
-                    # Sort: directories first, then files, alphabetically
-                    files.sort(key=lambda x: (x["type"] == "file", x["name"]))
-                    
-                    return {"files": files}
-            
-            except zipfile.BadZipFile:
-                raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
-    
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Artifacts not found for this job")
-        raise HTTPException(status_code=e.response.status_code, detail=f"Error fetching artifacts: {e}")
-    except Exception as e:
-        logger.error(f"Error browsing artifacts for job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error browsing artifacts: {str(e)}")
-
-@api_router.get("/jobs/{job_id}/artifacts/download")
-async def download_job_artifact(job_id: int, path: Optional[str] = Query(None)):
-    """Download a specific file from job artifacts or entire archive"""
-    # Find the pipeline containing this job
-    pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
-    if not pipeline:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    project_id = pipeline.get('project_id')
-    
-    if USE_MOCK_DATA:
-        # Return mock file content
-        content = f"Mock content for {path or 'artifacts.zip'}"
-        return StreamingResponse(
-            io.BytesIO(content.encode()),
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={path or 'artifacts.zip'}"}
-        )
-    
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Download the artifacts archive
-            response = await client.get(
-                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
-                headers=gitlab_service.headers,
-                follow_redirects=True
-            )
-            response.raise_for_status()
-            
-            if not path:
-                # Return entire archive as zip
-                return StreamingResponse(
-                    io.BytesIO(response.content),
-                    media_type="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename=artifacts-job-{job_id}.zip"}
-                )
-            
-            # Extract specific file from archive
-            import zipfile
-            from io import BytesIO
-            
-            try:
-                zip_data = BytesIO(response.content)
-                with zipfile.ZipFile(zip_data, 'r') as zip_file:
-                    # Try to find the file
-                    if path not in zip_file.namelist():
-                        raise HTTPException(status_code=404, detail=f"File '{path}' not found in artifacts")
-                    
-                    file_content = zip_file.read(path)
-                    
-                    # Determine content type based on file extension
-                    import mimetypes
-                    content_type, _ = mimetypes.guess_type(path)
-                    if not content_type:
-                        content_type = "application/octet-stream"
-                    
-                    filename = path.split('/')[-1]
-                    
-                    return StreamingResponse(
-                        io.BytesIO(file_content),
-                        media_type=content_type,
-                        headers={"Content-Disposition": f"attachment; filename={filename}"}
-                    )
-            
-            except zipfile.BadZipFile:
-                raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
-    
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Artifacts not found for this job")
-        raise HTTPException(status_code=e.response.status_code, detail=f"Error fetching artifacts: {e}")
-    except Exception as e:
-        logger.error(f"Error downloading artifact for job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error downloading artifact: {str(e)}")
-
 @api_router.post("/sync")
 async def trigger_sync():
     """Manually trigger data sync"""
     await sync_gitlab_data()
     return {"message": "Sync completed"}
-
-@api_router.get("/settings/enabled-projects")
-async def get_enabled_projects():
-    """Get list of enabled project IDs"""
-    doc = await db.settings.find_one({"key": "enabled_projects"})
-    return {"enabled_projects": doc.get("value", []) if doc else []}
-
-@api_router.post("/settings/enabled-projects")
-async def update_enabled_projects(project_ids: List[int]):
-    """Update list of enabled project IDs"""
-    await db.settings.update_one(
-        {"key": "enabled_projects"},
-        {"$set": {"value": project_ids}},
-        upsert=True
-    )
-    return {"message": "Enabled projects updated", "enabled_projects": project_ids}
-
-@api_router.get("/projects/{project_id}/ci-config")
-async def get_ci_config(project_id: int, ref: Optional[str] = Query(None)):
-    """Get CI/CD configuration stage order from .gitlab-ci.yml"""
-    stages = await gitlab_service.fetch_gitlab_ci_config(project_id, ref)
-    
-    if stages:
-        return {"stages": stages, "source": "gitlab-ci.yml"}
-    else:
-        # Return default stage order if .gitlab-ci.yml is not available
-        return {"stages": ["build", "test", "deploy", "release", "cleanup"], "source": "default"}
-
-@api_router.get("/jobs/{job_id}/tests")
-async def get_job_tests(job_id: int):
-    """Get test results for a specific job from JUnit artifacts"""
-    # Find the pipeline containing this job
-    pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
-    if not pipeline:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    # Get the project_id
-    project_id = pipeline.get('project_id')
-    
-    # Fetch JUnit test report
-    test_results = await gitlab_service.fetch_job_junit_report(project_id, job_id)
-    
-    if test_results:
-        return test_results
-    else:
-        return {
-            "total": 0,
-            "passed": 0,
-            "failed": 0,
-            "skipped": 0,
-            "tests": []
-        }
 
 app.include_router(api_router)
