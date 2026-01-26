@@ -30,7 +30,6 @@ GITLAB_TOKEN = os.environ.get('GITLAB_TOKEN', '')
 GITLAB_NAMESPACE = os.environ.get('GITLAB_NAMESPACE', 'ncryptify')
 DEFAULT_BRANCH = os.environ.get('DEFAULT_BRANCH', 'master')
 DAYS_TO_FETCH = int(os.environ.get('DAYS_TO_FETCH', '7'))
-USE_MOCK_DATA = os.environ.get('USE_MOCK_DATA', 'true').lower() == 'true'
 FETCH_INTERVAL = int(os.environ.get('FETCH_INTERVAL_SECONDS', '30'))
 
 # Global flag to track if initial sync is complete
@@ -284,9 +283,6 @@ class GitLabService:
         self.headers = {"PRIVATE-TOKEN": self.token}
 
     async def fetch_projects(self):
-        if USE_MOCK_DATA:
-            return await mock_service.fetch_projects()
-        
         all_projects = []
         page = 1
         per_page = 100
@@ -323,9 +319,6 @@ class GitLabService:
         return filtered_projects
 
     async def fetch_pipelines(self, project_id: int, ref: str = None, updated_after: str = None):
-        if USE_MOCK_DATA:
-            return await mock_service.fetch_pipelines(project_id)
-        
         # Build query parameters
         params = {"per_page": 100}
         if ref:
@@ -365,9 +358,6 @@ class GitLabService:
             return detailed_pipelines
 
     async def fetch_job_logs(self, project_id: int, job_id: int):
-        if USE_MOCK_DATA:
-            return await mock_service.fetch_job_logs(job_id)
-        
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/trace",
@@ -377,9 +367,6 @@ class GitLabService:
             return response.text
     
     async def fetch_job_artifacts(self, project_id: int, job_id: int):
-        if USE_MOCK_DATA:
-            return await mock_service.fetch_job_artifacts(project_id, job_id)
-        
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/api/v4/projects/{project_id}/jobs/{job_id}",
@@ -399,23 +386,7 @@ class GitLabService:
             return artifacts
     
     async def fetch_job_junit_report(self, project_id: int, job_id: int):
-        """Fetch and parse JUnit test report from job artifacts"""
-        if USE_MOCK_DATA:
-            # Return mock test data
-            return {
-                "total": 25,
-                "passed": 20,
-                "failed": 3,
-                "skipped": 2,
-                "tests": [
-                    {"name": "test_user_login", "classname": "tests.auth.TestAuth", "status": "passed", "duration": 0.5},
-                    {"name": "test_user_logout", "classname": "tests.auth.TestAuth", "status": "passed", "duration": 0.3},
-                    {"name": "test_invalid_credentials", "classname": "tests.auth.TestAuth", "status": "failed", "duration": 0.2, "failure_message": "AssertionError: Expected 401, got 200"},
-                    {"name": "test_database_connection", "classname": "tests.db.TestDatabase", "status": "passed", "duration": 1.2},
-                    {"name": "test_api_endpoint", "classname": "tests.api.TestAPI", "status": "skipped", "duration": 0.0, "skip_message": "Feature not implemented yet"},
-                ]
-            }
-        
+        """Fetch and parse JUnit test report from job artifacts - recursively searches for junit_report.xml in CI stage"""
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 # Download the artifacts archive
@@ -447,84 +418,99 @@ class GitLabService:
                         file_list = zip_file.namelist()
                         logger.info(f"Files in artifact archive: {file_list}")
                         
-                        # Look for JUnit XML files (common patterns)
-                        junit_patterns = ['junit', 'test-result', 'test_result', 'TEST-', 'report']
+                        # First, try to find junit_report.xml specifically (recursively in any directory)
+                        junit_file = None
+                        for file_path in file_list:
+                            if file_path.endswith('junit_report.xml'):
+                                junit_file = file_path
+                                logger.info(f"Found junit_report.xml at: {file_path}")
+                                break
                         
-                        for file_info in file_list:
-                            file_lower = file_info.lower()
-                            # Check if file is XML and matches JUnit patterns
-                            if file_info.endswith('.xml') and any(pattern in file_lower for pattern in junit_patterns):
-                                logger.info(f"Found potential JUnit file: {file_info}")
-                                try:
-                                    xml_content = zip_file.read(file_info)
-                                    root = ET.fromstring(xml_content)
-                                    
-                                    # Parse JUnit XML format - handle both testsuite and testsuites root
-                                    testsuites = root.findall('.//testsuite') if root.tag != 'testsuite' else [root]
-                                    
-                                    for testsuite in testsuites:
-                                        for testcase in testsuite.findall('testcase'):
-                                            test_name = testcase.get('name', 'Unknown')
-                                            classname = testcase.get('classname', '')
-                                            duration = float(testcase.get('time', 0))
-                                            
-                                            # Determine test status
-                                            failure = testcase.find('failure')
-                                            error = testcase.find('error')
-                                            skipped = testcase.find('skipped')
-                                            
-                                            if failure is not None:
-                                                status = 'failed'
-                                                test_results['failed'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration,
-                                                    "failure_message": failure.get('message', failure.text or 'No message')
-                                                })
-                                            elif error is not None:
-                                                status = 'failed'
-                                                test_results['failed'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration,
-                                                    "failure_message": error.get('message', error.text or 'No message')
-                                                })
-                                            elif skipped is not None:
-                                                status = 'skipped'
-                                                test_results['skipped'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration,
-                                                    "skip_message": skipped.get('message', skipped.text or 'No message')
-                                                })
-                                            else:
-                                                status = 'passed'
-                                                test_results['passed'] += 1
-                                                test_results['tests'].append({
-                                                    "name": test_name,
-                                                    "classname": classname,
-                                                    "status": status,
-                                                    "duration": duration
-                                                })
-                                            
-                                            test_results['total'] += 1
-                                    
-                                    logger.info(f"Parsed {test_results['total']} tests from {file_info}")
-                                except ET.ParseError as e:
-                                    logger.warning(f"XML parse error in {file_info}: {e}")
-                                    continue
-                                except Exception as e:
-                                    logger.warning(f"Error parsing JUnit XML file {file_info}: {e}")
-                                    continue
+                        # If junit_report.xml not found, look for other JUnit XML files
+                        if not junit_file:
+                            junit_patterns = ['junit', 'test-result', 'test_result', 'TEST-', 'report']
+                            for file_path in file_list:
+                                file_lower = file_path.lower()
+                                if file_path.endswith('.xml') and any(pattern in file_lower for pattern in junit_patterns):
+                                    junit_file = file_path
+                                    logger.info(f"Found alternative JUnit file: {file_path}")
+                                    break
                         
-                        if test_results['total'] == 0:
+                        # Process the found JUnit file
+                        if junit_file:
+                            try:
+                                xml_content = zip_file.read(junit_file)
+                                root = ET.fromstring(xml_content)
+                                
+                                # Parse JUnit XML format - handle both testsuite and testsuites root
+                                testsuites = root.findall('.//testsuite') if root.tag != 'testsuite' else [root]
+                                
+                                for testsuite in testsuites:
+                                    for testcase in testsuite.findall('testcase'):
+                                        test_name = testcase.get('name', 'Unknown')
+                                        classname = testcase.get('classname', '')
+                                        duration = float(testcase.get('time', 0))
+                                        
+                                        # Determine test status
+                                        failure = testcase.find('failure')
+                                        error = testcase.find('error')
+                                        skipped = testcase.find('skipped')
+                                        
+                                        if failure is not None:
+                                            status = 'failed'
+                                            test_results['failed'] += 1
+                                            test_results['tests'].append({
+                                                "name": test_name,
+                                                "classname": classname,
+                                                "status": status,
+                                                "duration": duration,
+                                                "failure_message": failure.get('message', failure.text or 'No message')
+                                            })
+                                        elif error is not None:
+                                            status = 'failed'
+                                            test_results['failed'] += 1
+                                            test_results['tests'].append({
+                                                "name": test_name,
+                                                "classname": classname,
+                                                "status": status,
+                                                "duration": duration,
+                                                "failure_message": error.get('message', error.text or 'No message')
+                                            })
+                                        elif skipped is not None:
+                                            status = 'skipped'
+                                            test_results['skipped'] += 1
+                                            test_results['tests'].append({
+                                                "name": test_name,
+                                                "classname": classname,
+                                                "status": status,
+                                                "duration": duration,
+                                                "skip_message": skipped.get('message', skipped.text or 'No message')
+                                            })
+                                        else:
+                                            status = 'passed'
+                                            test_results['passed'] += 1
+                                            test_results['tests'].append({
+                                                "name": test_name,
+                                                "classname": classname,
+                                                "status": status,
+                                                "duration": duration
+                                            })
+                                        
+                                        test_results['total'] += 1
+                                
+                                logger.info(f"Parsed {test_results['total']} tests from {junit_file}")
+                            except ET.ParseError as e:
+                                logger.warning(f"XML parse error in {junit_file}: {e}")
+                            except Exception as e:
+                                logger.warning(f"Error parsing JUnit XML file {junit_file}: {e}")
+                        else:
                             logger.warning(f"No JUnit test results found in artifacts for job {job_id}")
+                        
+                        if False:  # Dummy condition to skip old loop
+                            for file_info in file_list:
+                                file_lower = file_info.lower()
+                                if file_info.endswith('.xml') and False:
+                                    logger.info(f"Found potential JUnit file: {file_info}")
                 
                 except zipfile.BadZipFile:
                     logger.error(f"Artifacts for job {job_id} is not a valid ZIP file")
@@ -541,10 +527,6 @@ class GitLabService:
     
     async def fetch_gitlab_ci_config(self, project_id: int, ref: str = None):
         """Fetch .gitlab-ci.yml file from a project to get stage order"""
-        if USE_MOCK_DATA:
-            # Return mock stage order
-            return ["build", "test", "deploy"]
-        
         try:
             params = {"ref": ref or DEFAULT_BRANCH}
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -867,21 +849,6 @@ async def get_branches():
 
 @api_router.post("/pipelines/{pipeline_id}/action")
 async def pipeline_action(pipeline_id: int, action: PipelineAction):
-    # For mock data, just update the status
-    if USE_MOCK_DATA:
-        if action.action == "retry":
-            await db.pipelines.update_one(
-                {"id": pipeline_id},
-                {"$set": {"status": "pending"}}
-            )
-            return {"message": "Pipeline retry initiated (mock)"}
-        elif action.action == "cancel":
-            await db.pipelines.update_one(
-                {"id": pipeline_id},
-                {"$set": {"status": "canceled"}}
-            )
-            return {"message": "Pipeline canceled (mock)"}
-    
     return {"message": f"Action '{action.action}' not supported in current mode"}
 
 @api_router.get("/pipelines/{pipeline_id}/artifacts")
@@ -924,7 +891,7 @@ async def get_job_artifacts(job_id: int):
 
 @api_router.get("/jobs/{job_id}/artifacts/browse")
 async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
-    """Browse files within job artifacts"""
+    """Browse files within job artifacts using GitLab's browse API"""
     # Find the pipeline containing this job
     pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
     if not pipeline:
@@ -932,107 +899,114 @@ async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
     
     project_id = pipeline.get('project_id')
     
-    if USE_MOCK_DATA:
-        # Return mock artifact file structure
-        if not path:
-            return {
-                "files": [
-                    {"name": "test-results", "type": "directory", "path": "test-results"},
-                    {"name": "coverage", "type": "directory", "path": "coverage"},
-                    {"name": "build.log", "type": "file", "path": "build.log", "size": 1024},
-                ]
-            }
-        elif path == "test-results":
-            return {
-                "files": [
-                    {"name": "junit.xml", "type": "file", "path": "test-results/junit.xml", "size": 2048},
-                    {"name": "test-report.html", "type": "file", "path": "test-results/test-report.html", "size": 4096},
-                ]
-            }
-        elif path == "coverage":
-            return {
-                "files": [
-                    {"name": "index.html", "type": "file", "path": "coverage/index.html", "size": 8192},
-                    {"name": "coverage.xml", "type": "file", "path": "coverage/coverage.xml", "size": 3072},
-                ]
-            }
-        return {"files": []}
-    
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Download the artifacts archive
+        # Use GitLab's artifact browsing API instead of downloading the entire archive
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Construct the browse URL
+            browse_path = f"/{path}" if path else ""
             response = await client.get(
-                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts{browse_path}",
                 headers=gitlab_service.headers,
                 follow_redirects=True
             )
-            response.raise_for_status()
             
-            # Parse the zip file to list contents
-            import zipfile
-            from io import BytesIO
-            
-            try:
-                zip_data = BytesIO(response.content)
-                with zipfile.ZipFile(zip_data, 'r') as zip_file:
-                    all_files = zip_file.namelist()
-                    
-                    # Filter files based on path
-                    if path:
-                        # Normalize path
-                        normalized_path = path.rstrip('/') + '/'
-                        filtered_files = [f for f in all_files if f.startswith(normalized_path)]
-                    else:
-                        filtered_files = all_files
-                    
-                    # Build directory structure
-                    files = []
-                    seen = set()
-                    
-                    for file_path in filtered_files:
-                        # Remove the base path if specified
+            # If the browse API doesn't work, fall back to listing from archive metadata
+            if response.status_code == 404 or response.headers.get('content-type', '').startswith('application/'):
+                # Try to get artifact file list without downloading full content
+                # Use HEAD request to check size first
+                head_response = await client.head(
+                    f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                    headers=gitlab_service.headers,
+                    follow_redirects=True
+                )
+                
+                content_length = int(head_response.headers.get('content-length', 0))
+                
+                # Only download if less than 100MB for browsing
+                if content_length > 100 * 1024 * 1024:
+                    # For large files, return a message indicating to download directly
+                    return {
+                        "files": [],
+                        "message": "Artifact is too large to browse. Please download the full archive.",
+                        "size": content_length
+                    }
+                
+                # Download and parse for smaller files
+                response = await client.get(
+                    f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                    headers=gitlab_service.headers,
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                
+                # Parse the zip file to list contents
+                import zipfile
+                from io import BytesIO
+                
+                try:
+                    zip_data = BytesIO(response.content)
+                    with zipfile.ZipFile(zip_data, 'r') as zip_file:
+                        all_files = zip_file.namelist()
+                        
+                        # Filter files based on path
                         if path:
-                            relative_path = file_path[len(path):].lstrip('/')
+                            # Normalize path
+                            normalized_path = path.rstrip('/') + '/'
+                            filtered_files = [f for f in all_files if f.startswith(normalized_path)]
                         else:
-                            relative_path = file_path
+                            filtered_files = all_files
                         
-                        if not relative_path:
-                            continue
+                        # Build directory structure
+                        files = []
+                        seen = set()
                         
-                        # Get the first component (file or directory)
-                        parts = relative_path.split('/')
-                        first_component = parts[0]
+                        for file_path in filtered_files:
+                            # Remove the base path if specified
+                            if path:
+                                relative_path = file_path[len(path):].lstrip('/')
+                            else:
+                                relative_path = file_path
+                            
+                            if not relative_path:
+                                continue
+                            
+                            # Get the first component (file or directory)
+                            parts = relative_path.split('/')
+                            first_component = parts[0]
+                            
+                            if first_component in seen:
+                                continue
+                            seen.add(first_component)
+                            
+                            # Determine if it's a file or directory
+                            full_path = f"{path}/{first_component}" if path else first_component
+                            is_directory = len(parts) > 1 or file_path.endswith('/')
+                            
+                            file_info = {
+                                "name": first_component,
+                                "type": "directory" if is_directory else "file",
+                                "path": full_path.rstrip('/')
+                            }
+                            
+                            # Add size for files
+                            if not is_directory:
+                                try:
+                                    file_info["size"] = zip_file.getinfo(file_path).file_size
+                                except:
+                                    file_info["size"] = 0
+                            
+                            files.append(file_info)
                         
-                        if first_component in seen:
-                            continue
-                        seen.add(first_component)
+                        # Sort: directories first, then files, alphabetically
+                        files.sort(key=lambda x: (x["type"] == "file", x["name"]))
                         
-                        # Determine if it's a file or directory
-                        full_path = f"{path}/{first_component}" if path else first_component
-                        is_directory = len(parts) > 1 or file_path.endswith('/')
-                        
-                        file_info = {
-                            "name": first_component,
-                            "type": "directory" if is_directory else "file",
-                            "path": full_path.rstrip('/')
-                        }
-                        
-                        # Add size for files
-                        if not is_directory:
-                            try:
-                                file_info["size"] = zip_file.getinfo(file_path).file_size
-                            except:
-                                file_info["size"] = 0
-                        
-                        files.append(file_info)
-                    
-                    # Sort: directories first, then files, alphabetically
-                    files.sort(key=lambda x: (x["type"] == "file", x["name"]))
-                    
-                    return {"files": files}
+                        return {"files": files}
+                
+                except zipfile.BadZipFile:
+                    raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
             
-            except zipfile.BadZipFile:
-                raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
+            response.raise_for_status()
+            return {"files": []}
     
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -1051,15 +1025,6 @@ async def download_job_artifact(job_id: int, path: Optional[str] = Query(None)):
         raise HTTPException(status_code=404, detail="Job not found")
     
     project_id = pipeline.get('project_id')
-    
-    if USE_MOCK_DATA:
-        # Return mock file content
-        content = f"Mock content for {path or 'artifacts.zip'}"
-        return StreamingResponse(
-            io.BytesIO(content.encode()),
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={path or 'artifacts.zip'}"}
-        )
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:

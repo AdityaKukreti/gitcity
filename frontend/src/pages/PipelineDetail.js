@@ -48,6 +48,14 @@ const PipelineDetail = () => {
     fetchArtifacts();
   }, [id]);
 
+  // Preload tests and artifacts when a job is selected
+  useEffect(() => {
+    if (selectedJob) {
+      fetchJobTests(selectedJob.id);
+      browseArtifacts(selectedJob.id, '');
+    }
+  }, [selectedJob]);
+
   const fetchPipeline = async () => {
     try {
       const response = await axios.get(`${API}/pipelines/${id}`);
@@ -126,6 +134,15 @@ const PipelineDetail = () => {
   };
 
   const browseArtifacts = async (jobId, path = '') => {
+    // Check if this job has artifacts first
+    const jobArtifacts = artifacts.filter(a => a.job_id === jobId);
+    if (jobArtifacts.length === 0) {
+      // No artifacts for this job, don't try to browse
+      setArtifactBrowser((prev) => ({ ...prev, [jobId]: [] }));
+      setCurrentPath((prev) => ({ ...prev, [jobId]: '' }));
+      return;
+    }
+
     setLoadingArtifacts((prev) => ({ ...prev, [jobId]: true }));
     try {
       const response = await axios.get(`${API}/jobs/${jobId}/artifacts/browse`, {
@@ -135,7 +152,11 @@ const PipelineDetail = () => {
       setCurrentPath((prev) => ({ ...prev, [jobId]: path }));
     } catch (error) {
       console.error('Error browsing artifacts:', error);
-      toast.error('Failed to browse artifacts');
+      // Don't show error toast if artifacts simply don't exist
+      if (error.response?.status !== 404) {
+        toast.error('Failed to browse artifacts');
+      }
+      setArtifactBrowser((prev) => ({ ...prev, [jobId]: [] }));
     } finally {
       setLoadingArtifacts((prev) => ({ ...prev, [jobId]: false }));
     }
@@ -546,7 +567,7 @@ const PipelineDetail = () => {
               )}
             </TabsContent>
 
-            <TabsContent value="tests" className="mt-4" data-testid="job-tests-content" onFocus={() => fetchJobTests(selectedJob.id)}>
+            <TabsContent value="tests" className="mt-4" data-testid="job-tests-content">
               {loadingTests ? (
                 <div className="flex items-center justify-center h-[400px]">
                   <PlayCircle className="w-8 h-8 text-running animate-pulse" />
@@ -652,7 +673,7 @@ const PipelineDetail = () => {
               )}
             </TabsContent>
 
-            <TabsContent value="artifacts" className="mt-4" data-testid="job-artifacts-content" onFocus={() => browseArtifacts(selectedJob.id, '')}>
+            <TabsContent value="artifacts" className="mt-4" data-testid="job-artifacts-content">
               <div className="space-y-3">
                 {artifacts.filter(a => a.job_id === selectedJob.id).length > 0 ? (
                   <>
