@@ -583,8 +583,8 @@ async def sync_gitlab_data():
         
         logger.info(f"Synced {len(projects)} projects from '{GITLAB_NAMESPACE}' namespace")
         
-        # Calculate date threshold for fetching pipelines (last 24 hours)
-        date_threshold = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        # Calculate date threshold for fetching pipelines based on DAYS_TO_FETCH
+        date_threshold = (datetime.now(timezone.utc) - timedelta(days=DAYS_TO_FETCH)).isoformat()
         
         # Filter projects based on settings (if any enabled projects are set)
         projects_to_fetch = projects
@@ -604,7 +604,7 @@ async def sync_gitlab_data():
                 updated_after=date_threshold
             )
             
-            logger.info(f"Found {len(pipelines)} pipelines for {project.get('name')} on branch '{DEFAULT_BRANCH}'")
+            logger.info(f"Found {len(pipelines)} pipelines for {project.get('name')} on branch '{DEFAULT_BRANCH}' (past {DAYS_TO_FETCH} days)")
             
             for pipeline in pipelines:
                 # Ensure project_name is set
@@ -641,7 +641,7 @@ async def sync_gitlab_data():
                 )
                 total_pipelines += 1
         
-        logger.info(f"Synced {total_pipelines} pipelines from the last 24 hours on branch '{DEFAULT_BRANCH}'")
+        logger.info(f"Synced {total_pipelines} pipelines from the past {DAYS_TO_FETCH} days on branch '{DEFAULT_BRANCH}'")
         initial_sync_complete = True
         
     except Exception as e:
@@ -860,14 +860,16 @@ async def get_pipeline_artifacts(pipeline_id: int):
     
     artifacts = []
     for job in pipeline.get('jobs', []):
-        if job.get('artifacts'):
-            for artifact in job['artifacts']:
-                artifacts.append({
-                    **artifact,
-                    "job_id": job['id'],
-                    "job_name": job['name'],
-                    "gitlab_download_url": artifact.get('download_url')
-                })
+        # Check if job has artifacts_file (the actual artifact metadata from GitLab)
+        if job.get('artifacts_file'):
+            artifacts.append({
+                "filename": job['artifacts_file'].get('filename', 'artifacts.zip'),
+                "size": job['artifacts_file'].get('size', 0),
+                "file_type": job.get('artifacts_file', {}).get('file_type', 'archive'),
+                "job_id": job['id'],
+                "job_name": job['name'],
+                "pipeline_id": pipeline_id
+            })
     
     return {"artifacts": artifacts}
 
@@ -879,59 +881,56 @@ async def get_job_artifacts(job_id: int):
         return {"artifacts": []}
     
     for job in pipeline.get('jobs', []):
-        if job['id'] == job_id and job.get('artifacts'):
+        if job['id'] == job_id and job.get('artifacts_file'):
             return {
-                "artifacts": [
-                    {**art, "gitlab_download_url": art.get('download_url')} 
-                    for art in job['artifacts']
-                ]
+                "artifacts": [{
+                    "filename": job['artifacts_file'].get('filename', 'artifacts.zip'),
+                    "size": job['artifacts_file'].get('size', 0),
+                    "file_type": job.get('artifacts_file', {}).get('file_type', 'archive'),
+                    "job_id": job['id'],
+                    "job_name": job['name']
+                }]
             }
     
     return {"artifacts": []}
 
 @api_router.get("/jobs/{job_id}/artifacts/browse")
 async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
-    """Browse files within job artifacts using GitLab's browse API"""
+    """Browse files within job artifacts"""
     # Find the pipeline containing this job
     pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
     if not pipeline:
         raise HTTPException(status_code=404, detail="Job not found")
     
+    # Check if job has artifacts
+    job_data = None
+    for job in pipeline.get('jobs', []):
+        if job['id'] == job_id:
+            job_data = job
+            break
+    
+    if not job_data or not job_data.get('artifacts_file'):
+        raise HTTPException(status_code=404, detail="Artifacts not found for this job")
+    
     project_id = pipeline.get('project_id')
     
     try:
-        # Use GitLab's artifact browsing API instead of downloading the entire archive
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Construct the browse URL
-            browse_path = f"/{path}" if path else ""
-            response = await client.get(
-                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts{browse_path}",
-                headers=gitlab_service.headers,
-                follow_redirects=True
-            )
+        # Check artifact size first
+        content_length = job_data['artifacts_file'].get('size', 0)
+        
+        # Only download if less than 50MB for browsing (reduced from 100MB)
+        if content_length > 50 * 1024 * 1024:
+            return {
+                "files": [],
+                "message": "Artifact is too large to browse. Please download the full archive.",
+                "size": content_length
+            }
+        
+        # Download and parse the artifact with increased timeout
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=60.0, read=180.0)) as client:
+            logger.info(f"Downloading artifacts for job {job_id}, size: {content_length} bytes")
             
-            # If the browse API doesn't work, fall back to listing from archive metadata
-            if response.status_code == 404 or response.headers.get('content-type', '').startswith('application/'):
-                # Try to get artifact file list without downloading full content
-                # Use HEAD request to check size first
-                head_response = await client.head(
-                    f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
-                    headers=gitlab_service.headers,
-                    follow_redirects=True
-                )
-                
-                content_length = int(head_response.headers.get('content-length', 0))
-                
-                # Only download if less than 100MB for browsing
-                if content_length > 100 * 1024 * 1024:
-                    # For large files, return a message indicating to download directly
-                    return {
-                        "files": [],
-                        "message": "Artifact is too large to browse. Please download the full archive.",
-                        "size": content_length
-                    }
-                
-                # Download and parse for smaller files
+            try:
                 response = await client.get(
                     f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
                     headers=gitlab_service.headers,
@@ -939,79 +938,89 @@ async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
                 )
                 response.raise_for_status()
                 
-                # Parse the zip file to list contents
-                import zipfile
-                from io import BytesIO
-                
-                try:
-                    zip_data = BytesIO(response.content)
-                    with zipfile.ZipFile(zip_data, 'r') as zip_file:
-                        all_files = zip_file.namelist()
-                        
-                        # Filter files based on path
-                        if path:
-                            # Normalize path
-                            normalized_path = path.rstrip('/') + '/'
-                            filtered_files = [f for f in all_files if f.startswith(normalized_path)]
-                        else:
-                            filtered_files = all_files
-                        
-                        # Build directory structure
-                        files = []
-                        seen = set()
-                        
-                        for file_path in filtered_files:
-                            # Remove the base path if specified
-                            if path:
-                                relative_path = file_path[len(path):].lstrip('/')
-                            else:
-                                relative_path = file_path
-                            
-                            if not relative_path:
-                                continue
-                            
-                            # Get the first component (file or directory)
-                            parts = relative_path.split('/')
-                            first_component = parts[0]
-                            
-                            if first_component in seen:
-                                continue
-                            seen.add(first_component)
-                            
-                            # Determine if it's a file or directory
-                            full_path = f"{path}/{first_component}" if path else first_component
-                            is_directory = len(parts) > 1 or file_path.endswith('/')
-                            
-                            file_info = {
-                                "name": first_component,
-                                "type": "directory" if is_directory else "file",
-                                "path": full_path.rstrip('/')
-                            }
-                            
-                            # Add size for files
-                            if not is_directory:
-                                try:
-                                    file_info["size"] = zip_file.getinfo(file_path).file_size
-                                except:
-                                    file_info["size"] = 0
-                            
-                            files.append(file_info)
-                        
-                        # Sort: directories first, then files, alphabetically
-                        files.sort(key=lambda x: (x["type"] == "file", x["name"]))
-                        
-                        return {"files": files}
-                
-                except zipfile.BadZipFile:
-                    raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
+                logger.info(f"Successfully downloaded {len(response.content)} bytes for job {job_id}")
+            except httpx.ReadError as e:
+                logger.error(f"Read error downloading artifacts for job {job_id}: {e}")
+                raise HTTPException(status_code=502, detail="Error reading artifact data from GitLab. The connection may have been interrupted.")
+            except httpx.RemoteProtocolError as e:
+                logger.error(f"Protocol error downloading artifacts for job {job_id}: {e}")
+                raise HTTPException(status_code=502, detail="GitLab server closed the connection unexpectedly. Try downloading the full archive instead.")
             
-            response.raise_for_status()
-            return {"files": []}
+            # Parse the zip file to list contents
+            import zipfile
+            from io import BytesIO
+            
+            try:
+                zip_data = BytesIO(response.content)
+                with zipfile.ZipFile(zip_data, 'r') as zip_file:
+                    all_files = zip_file.namelist()
+                    
+                    # Filter files based on path
+                    if path:
+                        # Normalize path - ensure it ends with / for directory matching
+                        normalized_path = path.rstrip('/') + '/'
+                        filtered_files = [f for f in all_files if f.startswith(normalized_path)]
+                    else:
+                        filtered_files = all_files
+                    
+                    # Build directory structure
+                    files = []
+                    seen = set()
+                    
+                    for file_path in filtered_files:
+                        # Remove the base path if specified
+                        if path:
+                            relative_path = file_path[len(normalized_path):]
+                        else:
+                            relative_path = file_path
+                        
+                        if not relative_path:
+                            continue
+                        
+                        # Get the first component (file or directory)
+                        parts = relative_path.split('/')
+                        first_component = parts[0]
+                        
+                        if first_component in seen or not first_component:
+                            continue
+                        seen.add(first_component)
+                        
+                        # Determine if it's a file or directory
+                        full_path = f"{path}/{first_component}" if path else first_component
+                        is_directory = len(parts) > 1 or file_path.endswith('/')
+                        
+                        file_info = {
+                            "name": first_component,
+                            "type": "directory" if is_directory else "file",
+                            "path": full_path.rstrip('/')
+                        }
+                        
+                        # Add size for files
+                        if not is_directory:
+                            try:
+                                file_info["size"] = zip_file.getinfo(file_path).file_size
+                            except:
+                                file_info["size"] = 0
+                        
+                        files.append(file_info)
+                    
+                    # Sort: directories first, then files, alphabetically
+                    files.sort(key=lambda x: (x["type"] == "file", x["name"]))
+                    
+                    return {"files": files}
+            
+            except zipfile.BadZipFile:
+                raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
     
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             raise HTTPException(status_code=404, detail="Artifacts not found for this job")
         raise HTTPException(status_code=e.response.status_code, detail=f"Error fetching artifacts: {e}")
+    except httpx.ReadTimeout:
+        logger.error(f"Timeout downloading artifacts for job {job_id}")
+        raise HTTPException(status_code=504, detail="Timeout downloading artifacts. The file may be too large. Try downloading the full archive instead.")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error browsing artifacts for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error browsing artifacts: {str(e)}")
