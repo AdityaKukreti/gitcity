@@ -802,12 +802,164 @@ async def pre_cache_artifact_structure(project_id: int, job_id: int, artifact_si
 
 # ============ Background Scheduler ============
 
+# Rate limiting semaphores for parallel processing
+API_SEMAPHORE = asyncio.Semaphore(20)  # Max 20 concurrent API calls to GitLab
+DB_SEMAPHORE = asyncio.Semaphore(50)   # Max 50 concurrent DB operations
+
+async def pre_cache_job_data(project_id: int, job: dict, pipeline_id: int):
+    """Pre-cache all data for a single job (logs, tests, artifacts) in parallel"""
+    job_id = job['id']
+    job_status = job['status']
+    job_name = job['name']
+    job_stage = job.get('stage', '')
+    
+    tasks = []
+    
+    # Task 1: Pre-cache logs for completed jobs
+    if job_status in ['success', 'failed', 'canceled']:
+        async def cache_logs():
+            try:
+                async with API_SEMAPHORE:
+                    logs = await gitlab_service.fetch_job_logs(project_id, job_id)
+                processed_log = process_logs(logs, job_id, pipeline_id)
+                async with DB_SEMAPHORE:
+                    await db.processed_logs.update_one(
+                        {"job_id": job_id},
+                        {"$set": processed_log},
+                        upsert=True
+                    )
+                logger.info(f"✓ Cached logs for job {job_id} ({job_name})")
+            except Exception as e:
+                logger.error(f"✗ Error caching logs for job {job_id}: {e}")
+        
+        tasks.append(cache_logs())
+    
+    # Task 2: Pre-cache test results for test/CI stages
+    if job_status in ['success', 'failed'] and job_stage in ['test', 'ci', 'system_tests', 'static_analysis']:
+        async def cache_tests():
+            try:
+                async with API_SEMAPHORE:
+                    test_results = await gitlab_service.fetch_job_junit_report(project_id, job_id)
+                if test_results and test_results.get('total', 0) > 0:
+                    async with DB_SEMAPHORE:
+                        await db.test_results.update_one(
+                            {"job_id": job_id},
+                            {"$set": {
+                                "job_id": job_id,
+                                "pipeline_id": pipeline_id,
+                                "test_results": test_results,
+                                "cached_at": datetime.now(timezone.utc).isoformat()
+                            }},
+                            upsert=True
+                        )
+                    logger.info(f"✓ Cached tests for job {job_id} ({test_results['total']} tests)")
+            except Exception as e:
+                logger.error(f"✗ Error caching tests for job {job_id}: {e}")
+        
+        tasks.append(cache_tests())
+    
+    # Task 3: Fetch artifacts and pre-cache structure
+    if job_status in ['success', 'failed']:
+        async def cache_artifacts():
+            try:
+                async with API_SEMAPHORE:
+                    artifacts = await gitlab_service.fetch_job_artifacts(project_id, job_id)
+                job['artifacts'] = artifacts  # Store in job data
+                
+                # Pre-cache artifact structure for instant browsing
+                if artifacts and len(artifacts) > 0:
+                    artifact_size = artifacts[0].get('size', 0)
+                    if artifact_size > 0:
+                        await pre_cache_artifact_structure(project_id, job_id, artifact_size)
+                        logger.info(f"✓ Cached artifacts for job {job_id} ({artifact_size} bytes)")
+            except Exception as e:
+                logger.error(f"✗ Error caching artifacts for job {job_id}: {e}")
+        
+        tasks.append(cache_artifacts())
+    
+    # Execute all tasks for this job in parallel
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+async def process_pipeline(pipeline: dict, project_id: int, project_name: str):
+    """Process a single pipeline with parallel job caching"""
+    try:
+        # Ensure project_name is set
+        pipeline['project_name'] = project_name
+        pipeline['project_id'] = project_id
+        pipeline_id = pipeline['id']
+        
+        # Pre-cache data for all jobs in parallel (with concurrency limit)
+        jobs = pipeline.get('jobs', [])
+        if jobs:
+            # Process jobs in batches to avoid overwhelming the system
+            batch_size = 20
+            for i in range(0, len(jobs), batch_size):
+                batch = jobs[i:i+batch_size]
+                job_tasks = [pre_cache_job_data(project_id, job, pipeline_id) for job in batch]
+                await asyncio.gather(*job_tasks, return_exceptions=True)
+        
+        # Store pipeline in DB
+        async with DB_SEMAPHORE:
+            await db.pipelines.update_one(
+                {"id": pipeline_id},
+                {"$set": pipeline},
+                upsert=True
+            )
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error processing pipeline {pipeline.get('id')}: {e}")
+        return False
+
+async def process_project(project: dict, date_threshold: str):
+    """Process a single project with parallel pipeline processing"""
+    try:
+        project_id = project["id"]
+        project_name = project.get('name', project.get('path', 'Unknown'))
+        
+        logger.info(f"📦 Fetching pipelines for: {project_name} (ID: {project_id})")
+        
+        # Fetch pipelines for the default branch
+        async with API_SEMAPHORE:
+            pipelines = await gitlab_service.fetch_pipelines(
+                project_id, 
+                ref=DEFAULT_BRANCH,
+                updated_after=date_threshold
+            )
+        
+        logger.info(f"Found {len(pipelines)} pipelines for {project_name}")
+        
+        if not pipelines:
+            return 0
+        
+        # Process all pipelines in parallel (with concurrency limit)
+        pipeline_semaphore = asyncio.Semaphore(10)  # Max 10 pipelines per project concurrently
+        
+        async def process_with_limit(pipeline):
+            async with pipeline_semaphore:
+                return await process_pipeline(pipeline, project_id, project_name)
+        
+        pipeline_tasks = [process_with_limit(pipeline) for pipeline in pipelines]
+        results = await asyncio.gather(*pipeline_tasks, return_exceptions=True)
+        
+        # Count successful pipelines
+        success_count = sum(1 for r in results if r is True)
+        logger.info(f"✓ Processed {success_count}/{len(pipelines)} pipelines for {project_name}")
+        
+        return success_count
+        
+    except Exception as e:
+        logger.error(f"Error processing project {project.get('id')}: {e}")
+        return 0
+
 async def sync_gitlab_data():
-    """Background task to sync GitLab data"""
+    """Background task to sync GitLab data with parallel processing"""
     global initial_sync_complete
     
     try:
-        logger.info("Starting GitLab data sync...")
+        start_time = datetime.now(timezone.utc)
+        logger.info("🚀 Starting GitLab data sync (OPTIMIZED)...")
         
         # Fetch all projects from the configured namespace
         projects = await gitlab_service.fetch_projects()
@@ -821,13 +973,16 @@ async def sync_gitlab_data():
         enabled_projects_doc = await db.settings.find_one({"key": "enabled_projects"})
         enabled_projects = enabled_projects_doc.get("value", []) if enabled_projects_doc else []
         
-        # Store all projects (for settings page)
-        for project in projects:
-            await db.projects.update_one(
+        # Store all projects (for settings page) - in parallel
+        project_storage_tasks = [
+            db.projects.update_one(
                 {"id": project["id"]},
                 {"$set": project},
                 upsert=True
             )
+            for project in projects
+        ]
+        await asyncio.gather(*project_storage_tasks, return_exceptions=True)
         
         logger.info(f"Synced {len(projects)} projects from '{GITLAB_NAMESPACE}' namespace")
         
@@ -840,86 +995,23 @@ async def sync_gitlab_data():
             projects_to_fetch = [p for p in projects if p["id"] in enabled_projects]
             logger.info(f"Fetching data for {len(projects_to_fetch)} enabled projects")
         
-        # Fetch pipelines for each project
-        total_pipelines = 0
-        for project in projects_to_fetch:
-            logger.info(f"Fetching pipelines for project: {project.get('name')} (ID: {project['id']})")
-            
-            # Fetch pipelines for the default branch from the last 24 hours
-            pipelines = await gitlab_service.fetch_pipelines(
-                project["id"], 
-                ref=DEFAULT_BRANCH,
-                updated_after=date_threshold
-            )
-            
-            logger.info(f"Found {len(pipelines)} pipelines for {project.get('name')} on branch '{DEFAULT_BRANCH}' (past {DAYS_TO_FETCH} days)")
-            
-            for pipeline in pipelines:
-                # Ensure project_name is set
-                pipeline['project_name'] = project.get('name', project.get('path', 'Unknown'))
-                pipeline['project_id'] = project['id']
-                
-                # Pre-cache logs, tests, and artifacts for completed jobs
-                for job in pipeline.get('jobs', []):
-                    job_status = job['status']
-                    
-                    # Pre-cache logs for all completed jobs (not just failed)
-                    if job_status in ['success', 'failed', 'canceled']:
-                        try:
-                            logs = await gitlab_service.fetch_job_logs(project["id"], job['id'])
-                            processed_log = process_logs(logs, job['id'], pipeline['id'])
-                            await db.processed_logs.update_one(
-                                {"job_id": job['id']},
-                                {"$set": processed_log},
-                                upsert=True
-                            )
-                            logger.info(f"Pre-cached logs for job {job['id']} ({job['name']})")
-                        except Exception as e:
-                            logger.error(f"Error pre-caching logs for job {job['id']}: {e}")
-                    
-                    # Pre-cache test results for test/CI stages
-                    if job_status in ['success', 'failed'] and job.get('stage') in ['test', 'ci', 'system_tests', 'static_analysis']:
-                        try:
-                            test_results = await gitlab_service.fetch_job_junit_report(project["id"], job['id'])
-                            if test_results and test_results.get('total', 0) > 0:
-                                await db.test_results.update_one(
-                                    {"job_id": job['id']},
-                                    {"$set": {
-                                        "job_id": job['id'],
-                                        "pipeline_id": pipeline['id'],
-                                        "test_results": test_results,
-                                        "cached_at": datetime.now(timezone.utc).isoformat()
-                                    }},
-                                    upsert=True
-                                )
-                                logger.info(f"Pre-cached test results for job {job['id']} ({test_results['total']} tests)")
-                        except Exception as e:
-                            logger.error(f"Error pre-caching tests for job {job['id']}: {e}")
-                    
-                    # Fetch artifacts URLs and pre-cache structure
-                    if job_status in ['success', 'failed']:
-                        try:
-                            artifacts = await gitlab_service.fetch_job_artifacts(project["id"], job['id'])
-                            job['artifacts'] = artifacts  # Store in job data
-                            
-                            # Pre-cache artifact structure for instant browsing
-                            if artifacts and len(artifacts) > 0:
-                                artifact_size = artifacts[0].get('size', 0)
-                                if artifact_size > 0:
-                                    logger.info(f"Pre-caching artifact structure for job {job['id']} (size: {artifact_size} bytes)")
-                                    await pre_cache_artifact_structure(project["id"], job['id'], artifact_size)
-                        except Exception as e:
-                            logger.error(f"Error fetching/caching artifacts for job {job['id']}: {e}")
-                
-                # Store pipeline
-                await db.pipelines.update_one(
-                    {"id": pipeline["id"]},
-                    {"$set": pipeline},
-                    upsert=True
-                )
-                total_pipelines += 1
+        # Process all projects in parallel (with concurrency limit)
+        project_semaphore = asyncio.Semaphore(5)  # Max 5 projects concurrently
         
-        logger.info(f"Synced {total_pipelines} pipelines from the past {DAYS_TO_FETCH} days on branch '{DEFAULT_BRANCH}'")
+        async def process_with_limit(project):
+            async with project_semaphore:
+                return await process_project(project, date_threshold)
+        
+        project_tasks = [process_with_limit(project) for project in projects_to_fetch]
+        results = await asyncio.gather(*project_tasks, return_exceptions=True)
+        
+        # Calculate total pipelines processed
+        total_pipelines = sum(r for r in results if isinstance(r, int))
+        
+        elapsed_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        logger.info(f"✅ Sync complete! Processed {total_pipelines} pipelines in {elapsed_time:.1f}s")
+        logger.info(f"⚡ Average: {total_pipelines/elapsed_time:.1f} pipelines/sec")
+        
         initial_sync_complete = True
         
     except Exception as e:
