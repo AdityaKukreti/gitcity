@@ -552,6 +552,254 @@ class GitLabService:
 
 gitlab_service = GitLabService()
 
+# ============ Artifact Utilities ============
+
+async def parse_zip_central_directory(project_id: int, job_id: int, artifact_size: int):
+    """
+    Parse ZIP central directory without downloading entire file.
+    Downloads only the last portion of the file containing the central directory.
+    """
+    try:
+        # ZIP central directory is at the end of the file
+        # We need to download the last portion to find it
+        # Typical central directory size is < 64KB, but we'll download more to be safe
+        chunk_size = min(256 * 1024, artifact_size)  # Download last 256KB or entire file if smaller
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Use HTTP Range header to download only the end of the file
+            headers = {
+                **gitlab_service.headers,
+                "Range": f"bytes={artifact_size - chunk_size}-{artifact_size - 1}"
+            }
+            
+            logger.info(f"Downloading last {chunk_size} bytes of artifact for job {job_id} (total size: {artifact_size})")
+            
+            response = await client.get(
+                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                headers=headers,
+                follow_redirects=True
+            )
+            
+            # Check if server supports range requests
+            if response.status_code == 206:  # Partial Content
+                logger.info(f"Successfully downloaded {len(response.content)} bytes using Range request")
+            elif response.status_code == 200:
+                # Server doesn't support range requests, but we got the full file
+                logger.warning(f"Server doesn't support Range requests, downloaded full file ({len(response.content)} bytes)")
+            else:
+                response.raise_for_status()
+            
+            # Parse the ZIP central directory
+            import zipfile
+            from io import BytesIO
+            import struct
+            
+            data = response.content
+            
+            # Find End of Central Directory Record (EOCD)
+            # EOCD signature is 0x06054b50
+            eocd_signature = b'\x50\x4b\x05\x06'
+            eocd_pos = data.rfind(eocd_signature)
+            
+            if eocd_pos == -1:
+                logger.error("Could not find ZIP End of Central Directory")
+                return None
+            
+            # Parse EOCD to get central directory info
+            eocd_data = data[eocd_pos:]
+            if len(eocd_data) < 22:
+                logger.error("EOCD record too short")
+                return None
+            
+            # Extract central directory info from EOCD
+            # Format: signature(4) + disk_num(2) + cd_disk(2) + cd_entries_disk(2) + 
+            #         cd_entries_total(2) + cd_size(4) + cd_offset(4) + comment_len(2)
+            cd_entries = struct.unpack('<H', eocd_data[10:12])[0]
+            cd_size = struct.unpack('<I', eocd_data[12:16])[0]
+            cd_offset = struct.unpack('<I', eocd_data[16:20])[0]
+            
+            logger.info(f"Found central directory: {cd_entries} entries, size: {cd_size} bytes, offset: {cd_offset}")
+            
+            # Check if we have the full central directory in our downloaded chunk
+            cd_start_in_chunk = cd_offset - (artifact_size - chunk_size)
+            
+            if cd_start_in_chunk < 0:
+                # We need to download more data
+                logger.info(f"Central directory starts before our chunk, downloading more data")
+                # Download from central directory start to end of file
+                download_size = artifact_size - cd_offset
+                headers = {
+                    **gitlab_service.headers,
+                    "Range": f"bytes={cd_offset}-{artifact_size - 1}"
+                }
+                
+                response = await client.get(
+                    f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                    headers=headers,
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                data = response.content
+                cd_start_in_chunk = 0
+            
+            # Parse central directory entries
+            files = []
+            pos = cd_start_in_chunk
+            
+            for i in range(cd_entries):
+                if pos + 46 > len(data):
+                    logger.warning(f"Incomplete central directory entry at position {pos}")
+                    break
+                
+                # Central directory file header signature
+                signature = data[pos:pos+4]
+                if signature != b'\x50\x4b\x01\x02':
+                    logger.warning(f"Invalid central directory signature at position {pos}")
+                    break
+                
+                # Parse central directory entry
+                filename_len = struct.unpack('<H', data[pos+28:pos+30])[0]
+                extra_len = struct.unpack('<H', data[pos+30:pos+32])[0]
+                comment_len = struct.unpack('<H', data[pos+32:pos+34])[0]
+                uncompressed_size = struct.unpack('<I', data[pos+24:pos+28])[0]
+                
+                # Extract filename
+                filename_start = pos + 46
+                filename_end = filename_start + filename_len
+                if filename_end > len(data):
+                    logger.warning(f"Filename extends beyond data at position {pos}")
+                    break
+                
+                filename = data[filename_start:filename_end].decode('utf-8', errors='ignore')
+                
+                # Determine if it's a directory
+                is_directory = filename.endswith('/')
+                
+                files.append({
+                    "name": filename,
+                    "size": uncompressed_size,
+                    "is_directory": is_directory
+                })
+                
+                # Move to next entry
+                pos += 46 + filename_len + extra_len + comment_len
+            
+            logger.info(f"Successfully parsed {len(files)} files from central directory")
+            return files
+            
+    except Exception as e:
+        logger.error(f"Error parsing ZIP central directory for job {job_id}: {e}")
+        return None
+
+async def build_directory_structure(files, path=""):
+    """
+    Build a directory structure from flat file list.
+    Returns files/folders at the specified path level.
+    """
+    if not files:
+        return []
+    
+    # Normalize path
+    if path:
+        path = path.rstrip('/') + '/'
+    
+    # Filter files that are in the current path
+    result = []
+    seen = set()
+    
+    for file_info in files:
+        filename = file_info['name']
+        
+        # Skip if not in current path
+        if path and not filename.startswith(path):
+            continue
+        
+        # Get relative path from current directory
+        if path:
+            relative = filename[len(path):]
+        else:
+            relative = filename
+        
+        if not relative:
+            continue
+        
+        # Get first component (file or directory name)
+        parts = relative.split('/')
+        first_component = parts[0]
+        
+        if first_component in seen or not first_component:
+            continue
+        seen.add(first_component)
+        
+        # Determine if it's a directory
+        full_path = path + first_component
+        is_directory = len(parts) > 1 or filename.endswith('/')
+        
+        item = {
+            "name": first_component,
+            "type": "directory" if is_directory else "file",
+            "path": full_path.rstrip('/')
+        }
+        
+        # Add size for files
+        if not is_directory:
+            item["size"] = file_info['size']
+        
+        result.append(item)
+    
+    # Sort: directories first, then files, alphabetically
+    result.sort(key=lambda x: (x["type"] == "file", x["name"]))
+    
+    return result
+
+async def pre_cache_artifact_structure(project_id: int, job_id: int, artifact_size: int):
+    """
+    Pre-cache artifact structure during pipeline sync.
+    Uses streaming ZIP parser for instant browsing.
+    """
+    try:
+        # Check if already cached
+        cache_key = f"artifacts_browse_{job_id}_"
+        cached = await db.artifact_cache.find_one({"cache_key": cache_key})
+        
+        if cached:
+            # Check if cache is still valid (24 hours)
+            cache_time = datetime.fromisoformat(cached['cached_at'])
+            if datetime.now(timezone.utc) - cache_time < timedelta(hours=24):
+                logger.info(f"Artifact structure already cached for job {job_id}")
+                return True
+        
+        # Parse ZIP central directory
+        files = await parse_zip_central_directory(project_id, job_id, artifact_size)
+        
+        if not files:
+            logger.warning(f"Could not parse artifact structure for job {job_id}")
+            return False
+        
+        # Build root directory structure
+        root_structure = await build_directory_structure(files, "")
+        
+        # Cache the full file list and root structure
+        await db.artifact_cache.update_one(
+            {"cache_key": cache_key},
+            {"$set": {
+                "cache_key": cache_key,
+                "job_id": job_id,
+                "path": "",
+                "files": root_structure,
+                "full_file_list": files,  # Store complete file list for subdirectory queries
+                "cached_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+        
+        logger.info(f"Successfully pre-cached artifact structure for job {job_id} ({len(files)} files)")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error pre-caching artifact structure for job {job_id}: {e}")
+        return False
+
 # ============ Background Scheduler ============
 
 async def sync_gitlab_data():
@@ -625,13 +873,20 @@ async def sync_gitlab_data():
                         except Exception as e:
                             logger.error(f"Error processing logs for job {job['id']}: {e}")
                     
-                    # Fetch artifacts URLs only (don't download/store)
+                    # Fetch artifacts URLs and pre-cache structure
                     if job['status'] in ['success', 'failed']:
                         try:
                             artifacts = await gitlab_service.fetch_job_artifacts(project["id"], job['id'])
                             job['artifacts'] = artifacts  # Store in job data
+                            
+                            # Pre-cache artifact structure for instant browsing
+                            if artifacts and len(artifacts) > 0:
+                                artifact_size = artifacts[0].get('size', 0)
+                                if artifact_size > 0:
+                                    logger.info(f"Pre-caching artifact structure for job {job['id']} (size: {artifact_size} bytes)")
+                                    await pre_cache_artifact_structure(project["id"], job['id'], artifact_size)
                         except Exception as e:
-                            logger.error(f"Error fetching artifacts for job {job['id']}: {e}")
+                            logger.error(f"Error fetching/caching artifacts for job {job['id']}: {e}")
                 
                 # Store pipeline
                 await db.pipelines.update_one(
@@ -896,7 +1151,7 @@ async def get_job_artifacts(job_id: int):
 
 @api_router.get("/jobs/{job_id}/artifacts/browse")
 async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
-    """Browse files within job artifacts"""
+    """Browse files within job artifacts using GitLab API with caching"""
     # Find the pipeline containing this job
     pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
     if not pipeline:
@@ -912,6 +1167,92 @@ async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
     if not job_data or not job_data.get('artifacts_file'):
         raise HTTPException(status_code=404, detail="Artifacts not found for this job")
     
+    project_id = pipeline.get('project_id')
+    
+    # Check cache first - try to use pre-cached full file list
+    if not path:
+        # Root directory - check for pre-cached structure
+        cache_key = f"artifacts_browse_{job_id}_"
+        cached_result = await db.artifact_cache.find_one({"cache_key": cache_key})
+        
+        if cached_result:
+            # Check if cache is still valid (24 hours)
+            cache_time = datetime.fromisoformat(cached_result['cached_at'])
+            if datetime.now(timezone.utc) - cache_time < timedelta(hours=24):
+                logger.info(f"Returning pre-cached artifact structure for job {job_id}")
+                return {"files": cached_result['files'], "cached": True}
+    else:
+        # Subdirectory - try to build from full file list cache
+        root_cache_key = f"artifacts_browse_{job_id}_"
+        cached_result = await db.artifact_cache.find_one({"cache_key": root_cache_key})
+        
+        if cached_result and 'full_file_list' in cached_result:
+            # Check if cache is still valid (24 hours)
+            cache_time = datetime.fromisoformat(cached_result['cached_at'])
+            if datetime.now(timezone.utc) - cache_time < timedelta(hours=24):
+                logger.info(f"Building subdirectory structure from cached file list for job {job_id}, path: {path}")
+                # Build directory structure for this path from cached full file list
+                files = await build_directory_structure(cached_result['full_file_list'], path)
+                return {"files": files, "cached": True}
+    
+    # Try GitLab's artifact browsing API first (if available)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # GitLab API endpoint for browsing artifacts
+            # This endpoint lists files without downloading the entire archive
+            response = await client.get(
+                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                headers=gitlab_service.headers,
+                params={"path": path} if path else {},
+                follow_redirects=False  # Don't follow redirects for listing
+            )
+            
+            # If we get a redirect, it means we need to download the archive (fallback)
+            if response.status_code in [301, 302, 303, 307, 308]:
+                logger.info(f"GitLab artifact browsing API not available, falling back to archive download")
+                raise httpx.HTTPStatusError("Redirect received", request=response.request, response=response)
+            
+            response.raise_for_status()
+            
+            # Parse the response - GitLab may return JSON with file list
+            try:
+                files_data = response.json()
+                if isinstance(files_data, list):
+                    # Convert GitLab format to our format
+                    files = []
+                    for item in files_data:
+                        file_info = {
+                            "name": item.get('name', item.get('path', '').split('/')[-1]),
+                            "type": "directory" if item.get('type') == 'tree' else "file",
+                            "path": item.get('path', '')
+                        }
+                        if file_info["type"] == "file":
+                            file_info["size"] = item.get('size', 0)
+                        files.append(file_info)
+                    
+                    # Cache the result
+                    await db.artifact_cache.update_one(
+                        {"cache_key": cache_key},
+                        {"$set": {
+                            "cache_key": cache_key,
+                            "job_id": job_id,
+                            "path": path,
+                            "files": files,
+                            "cached_at": datetime.now(timezone.utc).isoformat()
+                        }},
+                        upsert=True
+                    )
+                    
+                    logger.info(f"Successfully browsed artifacts using GitLab API for job {job_id}")
+                    return {"files": files, "cached": False}
+            except:
+                # Response is not JSON, fall back to archive download
+                pass
+    
+    except Exception as e:
+        logger.info(f"GitLab artifact browsing API not available or failed: {e}, falling back to archive download")
+    
+    # Fallback: Download and parse the archive (original implementation)
     project_id = pipeline.get('project_id')
     
     try:
@@ -1007,7 +1348,20 @@ async def browse_job_artifacts(job_id: int, path: Optional[str] = Query("")):
                     # Sort: directories first, then files, alphabetically
                     files.sort(key=lambda x: (x["type"] == "file", x["name"]))
                     
-                    return {"files": files}
+                    # Cache the result
+                    await db.artifact_cache.update_one(
+                        {"cache_key": cache_key},
+                        {"$set": {
+                            "cache_key": cache_key,
+                            "job_id": job_id,
+                            "path": path,
+                            "files": files,
+                            "cached_at": datetime.now(timezone.utc).isoformat()
+                        }},
+                        upsert=True
+                    )
+                    
+                    return {"files": files, "cached": False}
             
             except zipfile.BadZipFile:
                 raise HTTPException(status_code=400, detail="Artifacts file is not a valid ZIP archive")
@@ -1097,6 +1451,23 @@ async def trigger_sync():
     await sync_gitlab_data()
     return {"message": "Sync completed"}
 
+@api_router.delete("/cache/artifacts")
+async def clear_artifact_cache(job_id: Optional[int] = Query(None)):
+    """Clear artifact cache - optionally for a specific job"""
+    if job_id:
+        result = await db.artifact_cache.delete_many({"job_id": job_id})
+        return {"message": f"Cleared cache for job {job_id}", "deleted_count": result.deleted_count}
+    else:
+        result = await db.artifact_cache.delete_many({})
+        return {"message": "Cleared all artifact cache", "deleted_count": result.deleted_count}
+
+@api_router.delete("/cache/artifacts/expired")
+async def clear_expired_artifact_cache():
+    """Clear expired artifact cache entries (older than 24 hours)"""
+    expiry_time = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    result = await db.artifact_cache.delete_many({"cached_at": {"$lt": expiry_time}})
+    return {"message": "Cleared expired artifact cache", "deleted_count": result.deleted_count}
+
 @api_router.get("/settings/enabled-projects")
 async def get_enabled_projects():
     """Get list of enabled project IDs"""
@@ -1148,5 +1519,159 @@ async def get_job_tests(job_id: int):
             "skipped": 0,
             "tests": []
         }
+
+@api_router.get("/pipelines/{pipeline_id}/tests")
+async def get_pipeline_tests(pipeline_id: int):
+    """Get aggregated test results for entire pipeline, grouped by team when applicable"""
+    # Find the pipeline
+    pipeline = await db.pipelines.find_one({"id": pipeline_id}, {"_id": 0})
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    
+    project_id = pipeline.get('project_id')
+    project_name = pipeline.get('project_name', '').lower()
+    
+    # Determine which stages to look for tests based on project
+    test_stages = ['ci']
+    if 'kylo-systests' in project_name:
+        test_stages.extend(['system_tests', 'static_analysis'])
+    
+    # Collect all jobs from test stages
+    test_jobs = [job for job in pipeline.get('jobs', []) if job.get('stage') in test_stages]
+    
+    if not test_jobs:
+        return {
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "teams": {},
+            "tests": []
+        }
+    
+    # Aggregate results
+    aggregated = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "teams": {},  # team_name -> test results
+        "tests": []
+    }
+    
+    # Process each job
+    for job in test_jobs:
+        job_id = job['id']
+        
+        # Fetch test results for this job
+        try:
+            test_results = await gitlab_service.fetch_job_junit_report(project_id, job_id)
+            
+            if not test_results or test_results['total'] == 0:
+                continue
+            
+            # Try to detect team from job artifacts structure
+            team_name = await detect_team_from_artifacts(project_id, job_id, project_name)
+            
+            # Add job info to each test
+            for test in test_results.get('tests', []):
+                test['job_id'] = job_id
+                test['job_name'] = job['name']
+                test['team'] = team_name
+            
+            # Aggregate by team
+            if team_name not in aggregated['teams']:
+                aggregated['teams'][team_name] = {
+                    "total": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "tests": []
+                }
+            
+            aggregated['teams'][team_name]['total'] += test_results['total']
+            aggregated['teams'][team_name]['passed'] += test_results['passed']
+            aggregated['teams'][team_name]['failed'] += test_results['failed']
+            aggregated['teams'][team_name]['skipped'] += test_results['skipped']
+            aggregated['teams'][team_name]['tests'].extend(test_results.get('tests', []))
+            
+            # Overall aggregation
+            aggregated['total'] += test_results['total']
+            aggregated['passed'] += test_results['passed']
+            aggregated['failed'] += test_results['failed']
+            aggregated['skipped'] += test_results['skipped']
+            aggregated['tests'].extend(test_results.get('tests', []))
+            
+        except Exception as e:
+            logger.error(f"Error fetching tests for job {job_id}: {e}")
+            continue
+    
+    return aggregated
+
+async def detect_team_from_artifacts(project_id: int, job_id: int, project_name: str):
+    """Detect team name from artifact structure"""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(
+                f"{gitlab_service.base_url}/api/v4/projects/{project_id}/jobs/{job_id}/artifacts",
+                headers=gitlab_service.headers,
+                follow_redirects=True
+            )
+            response.raise_for_status()
+            
+            import zipfile
+            from io import BytesIO
+            
+            zip_data = BytesIO(response.content)
+            with zipfile.ZipFile(zip_data, 'r') as zip_file:
+                file_list = zip_file.namelist()
+                
+                # Look for junit files
+                junit_files = [f for f in file_list if f.endswith('.xml') and 
+                              any(pattern in f.lower() for pattern in ['junit', 'test', 'report'])]
+                
+                if not junit_files:
+                    return 'default'
+                
+                # Check for team indicators
+                for junit_file in junit_files:
+                    parts = junit_file.split('/')
+                    
+                    # For zork: check if there's a team folder between build and junit
+                    # Pattern: build/<team_name>/junit_report.xml
+                    if 'zork' in project_name.lower():
+                        if 'build' in parts:
+                            build_idx = parts.index('build')
+                            # Check if there's a folder after build that's not 'junit'
+                            if build_idx + 1 < len(parts) and parts[build_idx + 1] not in ['junit', 'junit_report.xml']:
+                                potential_team = parts[build_idx + 1]
+                                # Single word team names
+                                if potential_team and not potential_team.endswith('.xml'):
+                                    return potential_team
+                    
+                    # For kylo-systests: check gotests/build structure
+                    # Pattern: gotests/build/<team_name>/junit_report.xml
+                    if 'kylo-systests' in project_name.lower():
+                        if 'gotests' in parts and 'build' in parts:
+                            build_idx = parts.index('build')
+                            if build_idx + 1 < len(parts) and parts[build_idx + 1] not in ['junit', 'junit_report.xml']:
+                                potential_team = parts[build_idx + 1]
+                                if potential_team and not potential_team.endswith('.xml'):
+                                    return potential_team
+                    
+                    # Check filename for team indicator
+                    filename = parts[-1]
+                    if '_' in filename:
+                        # Pattern: team_name_junit.xml
+                        name_parts = filename.replace('.xml', '').split('_')
+                        if len(name_parts) > 1 and name_parts[0] not in ['junit', 'test', 'report']:
+                            return name_parts[0]
+                
+                # Default team if no specific team detected
+                return 'default'
+                
+    except Exception as e:
+        logger.error(f"Error detecting team from artifacts for job {job_id}: {e}")
+        return 'default'
 
 app.include_router(api_router)
