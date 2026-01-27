@@ -59,7 +59,7 @@ sudo sh get-docker.sh
 sudo lsof -i :3000  # Frontend
 sudo lsof -i :8001  # Backend
 
-# Stop the conflicting service or change ports in docker-compose.yml
+# Stop the conflicting service or change ports in docker compose.yml
 ```
 
 ### Issue: Permission denied
@@ -101,7 +101,7 @@ build-inspector/
 ├── setup.sh              # Setup script (run first)
 ├── start.sh              # Start application
 ├── manage.sh             # Management commands
-├── docker-compose.yml    # Docker configuration
+├── docker compose.yml    # Docker configuration
 ├── .env                  # Your configuration
 ├── .env.example          # Configuration template
 ├── backend/
@@ -120,7 +120,7 @@ All services have health checks:
 ./manage.sh health
 
 # Check individual service status
-docker-compose ps
+docker compose ps
 
 # View service logs
 ./manage.sh logs-backend

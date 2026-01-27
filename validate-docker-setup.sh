@@ -22,14 +22,14 @@ else
     errors=$((errors + 1))
 fi
 
-# Check docker-compose.yml
+# Check docker compose.yml
 echo ""
-echo "2. Checking docker-compose.yml..."
-if [ -f "docker-compose.yml" ]; then
-    echo "   ✓ docker-compose.yml exists"
+echo "2. Checking docker compose.yml..."
+if [ -f "docker compose.yml" ]; then
+    echo "   ✓ docker compose.yml exists"
     
     # Validate YAML syntax
-    if grep -q "version:" docker-compose.yml && grep -q "services:" docker-compose.yml; then
+    if grep -q "version:" docker compose.yml && grep -q "services:" docker compose.yml; then
         echo "   ✓ Basic structure is valid"
     else
         echo "   ✗ Invalid YAML structure"
@@ -37,28 +37,28 @@ if [ -f "docker-compose.yml" ]; then
     fi
     
     # Check required services
-    if grep -q "mongodb:" docker-compose.yml; then
+    if grep -q "mongodb:" docker compose.yml; then
         echo "   ✓ MongoDB service defined"
     else
         echo "   ✗ MongoDB service missing"
         errors=$((errors + 1))
     fi
     
-    if grep -q "backend:" docker-compose.yml; then
+    if grep -q "backend:" docker compose.yml; then
         echo "   ✓ Backend service defined"
     else
         echo "   ✗ Backend service missing"
         errors=$((errors + 1))
     fi
     
-    if grep -q "frontend:" docker-compose.yml; then
+    if grep -q "frontend:" docker compose.yml; then
         echo "   ✓ Frontend service defined"
     else
         echo "   ✗ Frontend service missing"
         errors=$((errors + 1))
     fi
 else
-    echo "   ✗ docker-compose.yml missing"
+    echo "   ✗ docker compose.yml missing"
     errors=$((errors + 1))
 fi
 

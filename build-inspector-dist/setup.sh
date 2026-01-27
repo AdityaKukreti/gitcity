@@ -22,7 +22,7 @@ FETCH_INTERVAL_SECONDS=30
 # Frontend Configuration (update for production)
 REACT_APP_BACKEND_URL=http://localhost:8001
 
-# Database Configuration (automatically set by docker-compose)
+# Database Configuration (automatically set by docker compose)
 # MONGO_URL=mongodb://mongodb:27017
 # DB_NAME=build_inspector
 ENVEOF
@@ -43,7 +43,7 @@ echo ""
 echo "Checking required files..."
 
 required_files=(
-    "docker-compose.yml"
+    "docker compose.yml"
     "backend/Dockerfile"
     "frontend/Dockerfile"
     "backend/server.py"

@@ -859,9 +859,12 @@ async def sync_gitlab_data():
                 pipeline['project_name'] = project.get('name', project.get('path', 'Unknown'))
                 pipeline['project_id'] = project['id']
                 
-                # Process logs for failed jobs and fetch artifacts for completed jobs
+                # Pre-cache logs, tests, and artifacts for completed jobs
                 for job in pipeline.get('jobs', []):
-                    if job['status'] == 'failed':
+                    job_status = job['status']
+                    
+                    # Pre-cache logs for all completed jobs (not just failed)
+                    if job_status in ['success', 'failed', 'canceled']:
                         try:
                             logs = await gitlab_service.fetch_job_logs(project["id"], job['id'])
                             processed_log = process_logs(logs, job['id'], pipeline['id'])
@@ -870,11 +873,31 @@ async def sync_gitlab_data():
                                 {"$set": processed_log},
                                 upsert=True
                             )
+                            logger.info(f"Pre-cached logs for job {job['id']} ({job['name']})")
                         except Exception as e:
-                            logger.error(f"Error processing logs for job {job['id']}: {e}")
+                            logger.error(f"Error pre-caching logs for job {job['id']}: {e}")
+                    
+                    # Pre-cache test results for test/CI stages
+                    if job_status in ['success', 'failed'] and job.get('stage') in ['test', 'ci', 'system_tests', 'static_analysis']:
+                        try:
+                            test_results = await gitlab_service.fetch_job_junit_report(project["id"], job['id'])
+                            if test_results and test_results.get('total', 0) > 0:
+                                await db.test_results.update_one(
+                                    {"job_id": job['id']},
+                                    {"$set": {
+                                        "job_id": job['id'],
+                                        "pipeline_id": pipeline['id'],
+                                        "test_results": test_results,
+                                        "cached_at": datetime.now(timezone.utc).isoformat()
+                                    }},
+                                    upsert=True
+                                )
+                                logger.info(f"Pre-cached test results for job {job['id']} ({test_results['total']} tests)")
+                        except Exception as e:
+                            logger.error(f"Error pre-caching tests for job {job['id']}: {e}")
                     
                     # Fetch artifacts URLs and pre-cache structure
-                    if job['status'] in ['success', 'failed']:
+                    if job_status in ['success', 'failed']:
                         try:
                             artifacts = await gitlab_service.fetch_job_artifacts(project["id"], job['id'])
                             job['artifacts'] = artifacts  # Store in job data
@@ -1468,6 +1491,40 @@ async def clear_expired_artifact_cache():
     result = await db.artifact_cache.delete_many({"cached_at": {"$lt": expiry_time}})
     return {"message": "Cleared expired artifact cache", "deleted_count": result.deleted_count}
 
+@api_router.delete("/cache/logs")
+async def clear_log_cache(job_id: Optional[int] = Query(None)):
+    """Clear log cache - optionally for a specific job"""
+    if job_id:
+        result = await db.processed_logs.delete_many({"job_id": job_id})
+        return {"message": f"Cleared log cache for job {job_id}", "deleted_count": result.deleted_count}
+    else:
+        result = await db.processed_logs.delete_many({})
+        return {"message": "Cleared all log cache", "deleted_count": result.deleted_count}
+
+@api_router.delete("/cache/tests")
+async def clear_test_cache(job_id: Optional[int] = Query(None)):
+    """Clear test results cache - optionally for a specific job"""
+    if job_id:
+        result = await db.test_results.delete_many({"job_id": job_id})
+        return {"message": f"Cleared test cache for job {job_id}", "deleted_count": result.deleted_count}
+    else:
+        result = await db.test_results.delete_many({})
+        return {"message": "Cleared all test cache", "deleted_count": result.deleted_count}
+
+@api_router.get("/cache/stats")
+async def get_cache_stats():
+    """Get statistics about cached data"""
+    artifact_count = await db.artifact_cache.count_documents({})
+    log_count = await db.processed_logs.count_documents({})
+    test_count = await db.test_results.count_documents({})
+    
+    return {
+        "artifacts": artifact_count,
+        "logs": log_count,
+        "tests": test_count,
+        "total": artifact_count + log_count + test_count
+    }
+
 @api_router.get("/settings/enabled-projects")
 async def get_enabled_projects():
     """Get list of enabled project IDs"""
@@ -1497,7 +1554,16 @@ async def get_ci_config(project_id: int, ref: Optional[str] = Query(None)):
 
 @api_router.get("/jobs/{job_id}/tests")
 async def get_job_tests(job_id: int):
-    """Get test results for a specific job from JUnit artifacts"""
+    """Get test results for a specific job from JUnit artifacts (with caching)"""
+    # Check cache first
+    cached_results = await db.test_results.find_one({"job_id": job_id})
+    if cached_results:
+        # Check if cache is still valid (24 hours)
+        cache_time = datetime.fromisoformat(cached_results['cached_at'])
+        if datetime.now(timezone.utc) - cache_time < timedelta(hours=24):
+            logger.info(f"Returning cached test results for job {job_id}")
+            return cached_results['test_results']
+    
     # Find the pipeline containing this job
     pipeline = await db.pipelines.find_one({"jobs.id": job_id}, {"_id": 0})
     if not pipeline:
@@ -1510,6 +1576,17 @@ async def get_job_tests(job_id: int):
     test_results = await gitlab_service.fetch_job_junit_report(project_id, job_id)
     
     if test_results:
+        # Cache the results
+        await db.test_results.update_one(
+            {"job_id": job_id},
+            {"$set": {
+                "job_id": job_id,
+                "pipeline_id": pipeline['id'],
+                "test_results": test_results,
+                "cached_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
         return test_results
     else:
         return {

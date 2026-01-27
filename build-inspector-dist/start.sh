@@ -23,12 +23,13 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # Check if Docker Compose is installed
-if ! command -v docker-compose &> /dev/null; then
+if ! docker compose version &> /dev/null; then
     echo "❌ Docker Compose is not installed!"
     echo ""
-    echo "Install Docker Compose:"
-    echo "  sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose"
-    echo "  sudo chmod +x /usr/local/bin/docker-compose"
+    echo "Install Docker Compose Plugin:"
+    echo "  mkdir -p ~/.docker/cli-plugins/"
+    echo "  curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m) -o ~/.docker/cli-plugins/docker-compose"
+    echo "  chmod +x ~/.docker/cli-plugins/docker-compose"
     exit 1
 fi
 
@@ -54,7 +55,7 @@ FETCH_INTERVAL_SECONDS=30
 # Frontend Configuration (update for production)
 REACT_APP_BACKEND_URL=http://localhost:8001
 
-# Database Configuration (automatically set by docker-compose)
+# Database Configuration (automatically set by docker compose)
 # MONGO_URL=mongodb://mongodb:27017
 # DB_NAME=build_inspector
 ENVEOF
@@ -82,12 +83,12 @@ echo ""
 
 # Stop existing containers
 echo "Stopping existing containers..."
-docker-compose down 2>/dev/null || true
+docker compose down 2>/dev/null || true
 
 # Build and start services
 echo ""
 echo "Building and starting services..."
-docker-compose up -d --build
+docker compose up -d --build
 
 echo ""
 echo "Waiting for services to be healthy..."
@@ -96,7 +97,7 @@ sleep 10
 # Check service status
 echo ""
 echo "Service Status:"
-docker-compose ps
+docker compose ps
 
 echo ""
 echo "======================================"
@@ -109,10 +110,10 @@ echo "  🔧 Backend:   http://localhost:8001"
 echo "  📚 API Docs:  http://localhost:8001/docs"
 echo ""
 echo "Useful commands:"
-echo "  View logs:        docker-compose logs -f"
-echo "  Stop services:    docker-compose down"
-echo "  Restart:          docker-compose restart"
-echo "  View status:      docker-compose ps"
+echo "  View logs:        docker compose logs -f"
+echo "  Stop services:    docker compose down"
+echo "  Restart:          docker compose restart"
+echo "  View status:      docker compose ps"
 echo ""
 echo "For deployment guide, see: DEPLOYMENT.md"
 echo ""

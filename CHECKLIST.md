@@ -26,7 +26,7 @@ Use this checklist before deploying Build Inspector to production.
 - [ ] MongoDB not exposed to public internet
 - [ ] SSL/HTTPS configured (if public-facing)
 - [ ] Firewall rules configured properly
-- [ ] Resource limits set in docker-compose.yml
+- [ ] Resource limits set in docker compose.yml
 
 ## ✅ Testing
 
@@ -85,7 +85,7 @@ nano .env  # Edit configuration
 ./validate-docker-setup.sh
 
 # 3. Deploy
-docker-compose up -d --build
+docker compose up -d --build
 
 # 4. Verify
 ./manage.sh health

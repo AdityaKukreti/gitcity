@@ -41,7 +41,7 @@ EOF
 case "$1" in
     start)
         echo "Starting Build Inspector..."
-        docker-compose up -d
+        docker compose up -d
         echo ""
         echo "✓ Services started!"
         echo "  Frontend: http://localhost:3000"
@@ -50,40 +50,40 @@ case "$1" in
     
     stop)
         echo "Stopping Build Inspector..."
-        docker-compose down
+        docker compose down
         echo "✓ Services stopped"
         ;;
     
     restart)
         echo "Restarting Build Inspector..."
-        docker-compose restart
+        docker compose restart
         echo "✓ Services restarted"
         ;;
     
     status)
-        docker-compose ps
+        docker compose ps
         ;;
     
     logs)
-        docker-compose logs -f
+        docker compose logs -f
         ;;
     
     logs-backend)
-        docker-compose logs -f backend
+        docker compose logs -f backend
         ;;
     
     logs-frontend)
-        docker-compose logs -f frontend
+        docker compose logs -f frontend
         ;;
     
     logs-mongodb)
-        docker-compose logs -f mongodb
+        docker compose logs -f mongodb
         ;;
     
     build)
         echo "Rebuilding containers..."
-        docker-compose down
-        docker-compose up -d --build
+        docker compose down
+        docker compose up -d --build
         echo "✓ Rebuild complete"
         ;;
     
@@ -91,7 +91,7 @@ case "$1" in
         echo "⚠️  This will remove all containers and data!"
         read -p "Are you sure? (yes/no): " confirm
         if [ "$confirm" = "yes" ]; then
-            docker-compose down -v --remove-orphans
+            docker compose down -v --remove-orphans
             echo "✓ Cleanup complete"
         else
             echo "Cancelled"
@@ -99,17 +99,17 @@ case "$1" in
         ;;
     
     shell-backend)
-        docker-compose exec backend bash
+        docker compose exec backend bash
         ;;
     
     shell-mongodb)
-        docker-compose exec mongodb mongosh build_inspector
+        docker compose exec mongodb mongosh build_inspector
         ;;
     
     backup)
         BACKUP_FILE="backup-$(date +%Y%m%d-%H%M%S).archive"
         echo "Creating backup: $BACKUP_FILE"
-        docker-compose exec -T mongodb mongodump \
+        docker compose exec -T mongodb mongodump \
             --db build_inspector \
             --archive > "$BACKUP_FILE"
         echo "✓ Backup saved to $BACKUP_FILE"
@@ -121,7 +121,7 @@ case "$1" in
             exit 1
         fi
         echo "Restoring from: $2"
-        docker-compose exec -T mongodb mongorestore \
+        docker compose exec -T mongodb mongorestore \
             --archive < "$2"
         echo "✓ Restore complete"
         ;;
@@ -129,8 +129,8 @@ case "$1" in
     update)
         echo "Updating Build Inspector..."
         git pull origin main
-        docker-compose down
-        docker-compose up -d --build
+        docker compose down
+        docker compose up -d --build
         echo "✓ Update complete"
         ;;
     
@@ -153,7 +153,7 @@ case "$1" in
         fi
         
         # MongoDB
-        if docker-compose exec -T mongodb mongosh --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+        if docker compose exec -T mongodb mongosh --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
             echo "✓ MongoDB: Healthy"
         else
             echo "✗ MongoDB: Unhealthy"

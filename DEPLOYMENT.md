@@ -15,7 +15,7 @@ cd /path/to/build-inspector
 
 2. **Start with mock data (no GitLab needed):**
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 3. **Access the application:**
@@ -25,12 +25,12 @@ docker-compose up -d
 
 4. **View logs:**
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 
 5. **Stop the application:**
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Production Deployment with Real GitLab
@@ -54,8 +54,8 @@ REACT_APP_BACKEND_URL=https://api.yourdomain.com
 
 3. **Rebuild with new configuration:**
 ```bash
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 ```
 
 ### GitLab Token Setup
@@ -91,7 +91,7 @@ scp -r build-inspector/ user@your-vm-ip:/home/user/
 cd build-inspector
 cp .env.example .env
 # Edit .env with your GitLab credentials
-docker-compose up -d
+docker compose up -d
 ```
 
 4. **Setup reverse proxy (Nginx):**
@@ -193,31 +193,31 @@ gcloud run deploy frontend \
 
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Stop all services
-docker-compose down
+docker compose down
 
 # View logs
-docker-compose logs -f [service_name]
+docker compose logs -f [service_name]
 
 # Rebuild after code changes
-docker-compose up -d --build
+docker compose up -d --build
 
 # Scale backend (if needed)
-docker-compose up -d --scale backend=3
+docker compose up -d --scale backend=3
 
 # Execute command in container
-docker-compose exec backend python -c "print('test')"
+docker compose exec backend python -c "print('test')"
 
 # Access MongoDB shell
-docker-compose exec mongodb mongosh build_inspector
+docker compose exec mongodb mongosh build_inspector
 
 # View resource usage
 docker stats
 
 # Clean up everything
-docker-compose down -v --remove-orphans
+docker compose down -v --remove-orphans
 ```
 
 ---
@@ -246,7 +246,7 @@ All services have built-in health checks:
 
 ```bash
 # Check service health
-docker-compose ps
+docker compose ps
 
 # Backend health
 curl http://localhost:8001/api/
@@ -255,19 +255,19 @@ curl http://localhost:8001/api/
 curl http://localhost:3000/health
 
 # MongoDB health
-docker-compose exec mongodb mongosh --eval "db.adminCommand('ping')"
+docker compose exec mongodb mongosh --eval "db.adminCommand('ping')"
 ```
 
 ### Backup MongoDB Data
 
 ```bash
 # Backup
-docker-compose exec -T mongodb mongodump \
+docker compose exec -T mongodb mongodump \
   --db build_inspector \
   --archive > backup.archive
 
 # Restore
-docker-compose exec -T mongodb mongorestore \
+docker compose exec -T mongodb mongorestore \
   --archive < backup.archive
 ```
 
@@ -278,8 +278,8 @@ docker-compose exec -T mongodb mongorestore \
 git pull origin main
 
 # Rebuild and restart
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 ```
 
 ---
@@ -301,8 +301,8 @@ REACT_APP_BACKEND_URL=https://api.yourdomain.com
 
 **Solution:** Ensure MongoDB is healthy
 ```bash
-docker-compose ps mongodb
-docker-compose logs mongodb
+docker compose ps mongodb
+docker compose logs mongodb
 ```
 
 ### Issue: GitLab authentication failed
@@ -346,7 +346,7 @@ services:
 ## Support
 
 For issues or questions:
-1. Check logs: `docker-compose logs -f`
+1. Check logs: `docker compose logs -f`
 2. Verify environment variables
 3. Check health endpoints
 4. Review `/app/DATABASE_INFO.md` for architecture

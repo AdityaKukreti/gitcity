@@ -43,10 +43,10 @@ echo ""
 
 # Step 1: Stop all containers
 print_info "Stopping all Docker containers..."
-if docker-compose down 2>/dev/null; then
+if docker compose down 2>/dev/null; then
     print_success "Containers stopped successfully"
 else
-    print_warning "No containers were running or docker-compose.yml not found"
+    print_warning "No containers were running or docker compose.yml not found"
 fi
 
 # Step 2: Prune Docker system
@@ -85,7 +85,7 @@ if [ "$CLEAR_DB" = true ]; then
     if [[ $REPLY == "yes" ]]; then
         # Start only MongoDB to clear it
         print_info "Starting MongoDB container..."
-        docker-compose up -d mongo
+        docker compose up -d mongo
         
         # Wait for MongoDB to be ready
         print_info "Waiting for MongoDB to be ready..."
@@ -96,7 +96,7 @@ if [ "$CLEAR_DB" = true ]; then
         
         # Clear the database
         print_info "Dropping database: $MONGO_DB_NAME"
-        docker-compose exec -T mongo mongosh --quiet --eval "
+        docker compose exec -T mongo mongosh --quiet --eval "
             use $MONGO_DB_NAME;
             db.dropDatabase();
             print('Database dropped successfully');
@@ -106,7 +106,7 @@ if [ "$CLEAR_DB" = true ]; then
         
         # Stop MongoDB
         print_info "Stopping MongoDB container..."
-        docker-compose down
+        docker compose down
         print_success "MongoDB stopped"
     else
         print_info "Database clearing cancelled"

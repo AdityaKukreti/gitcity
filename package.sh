@@ -48,7 +48,7 @@ cp frontend/.env.production "$DIST_DIR/frontend/" 2>/dev/null || true
 
 # Copy root files
 echo "  Copying configuration..."
-cp docker-compose.yml "$DIST_DIR/"
+cp docker compose.yml "$DIST_DIR/"
 cp .dockerignore "$DIST_DIR/" 2>/dev/null || true
 cp .env.example "$DIST_DIR/" 2>/dev/null || true
 

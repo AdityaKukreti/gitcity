@@ -78,8 +78,8 @@ FETCH_INTERVAL_SECONDS=30
 
 3. **Start Application:**
 ```bash
-docker-compose down
-docker-compose up -d --build
+docker compose down
+docker compose up -d --build
 ```
 
 ## 📦 What's Included
@@ -96,7 +96,7 @@ build-inspector/
 │   │   └── components/  # Reusable UI components
 │   ├── Dockerfile       # Frontend container
 │   └── nginx.conf       # Production web server config
-├── docker-compose.yml   # Multi-container orchestration
+├── docker compose.yml   # Multi-container orchestration
 ├── start.sh            # Easy startup script
 ├── DEPLOYMENT.md       # Deployment guide
 └── DATABASE_INFO.md    # Database architecture
@@ -159,17 +159,17 @@ curl http://localhost:8001/api/
 curl http://localhost:3000/health
 
 # Service status
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ## 🆘 Troubleshooting
 
 **Frontend can't connect to backend:**
 - Check `REACT_APP_BACKEND_URL` in `.env`
-- Verify backend is running: `docker-compose ps`
+- Verify backend is running: `docker compose ps`
 
 **GitLab authentication failed:**
 - Verify token has `api` and `read_api` scopes

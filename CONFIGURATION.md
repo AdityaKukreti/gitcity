@@ -135,13 +135,13 @@ USE_MOCK_DATA=false
 
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f backend
+docker compose logs -f backend
 
 # Stop services
-docker-compose down
+docker compose down
 ```
 
 ### Manual Setup
@@ -183,7 +183,7 @@ Response:
 Monitor the backend logs to see sync progress:
 
 ```bash
-docker-compose logs -f backend
+docker compose logs -f backend
 ```
 
 You'll see messages like:
@@ -225,7 +225,7 @@ If the loading screen doesn't disappear:
 ### Changing Namespace After Initial Setup
 
 1. Update `GITLAB_NAMESPACE` in `.env`
-2. Restart the backend: `docker-compose restart backend`
+2. Restart the backend: `docker compose restart backend`
 3. Trigger a manual sync: `curl -X POST http://localhost:8001/api/sync`
 
 ### Multiple Branches

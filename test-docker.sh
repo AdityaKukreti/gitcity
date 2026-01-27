@@ -15,14 +15,14 @@ echo "2. Testing frontend Dockerfile syntax..."
 cd /app/frontend
 docker build --dry-run -t build-inspector-frontend-test . 2>&1 | head -5 || echo "Frontend Dockerfile syntax OK"
 
-# Test docker-compose syntax
+# Test docker compose syntax
 echo ""
-echo "3. Testing docker-compose.yml syntax..."
+echo "3. Testing docker compose.yml syntax..."
 cd /app
-docker-compose config > /dev/null && echo "✓ docker-compose.yml syntax is valid"
+docker compose config > /dev/null && echo "✓ docker compose.yml syntax is valid"
 
 echo ""
 echo "✓ All Docker configurations are valid!"
 echo ""
 echo "To deploy:"
-echo "  cd /app && docker-compose up -d"
+echo "  cd /app && docker compose up -d"
