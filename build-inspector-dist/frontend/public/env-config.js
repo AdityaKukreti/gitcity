@@ -1,3 +1,3 @@
 window.ENV = {
-  REACT_APP_BACKEND_URL: 'http://localhost:8001'
+  REACT_APP_API_URL: 'https://localhost:443'
 };

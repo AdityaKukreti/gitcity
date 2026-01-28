@@ -7,6 +7,7 @@ import Pipelines from '@/pages/Pipelines';
 import PipelineDetail from '@/pages/PipelineDetail';
 import Settings from '@/pages/Settings';
 import LoadingScreen from '@/components/LoadingScreen';
+import SyncProgressIndicator from '@/components/SyncProgressIndicator';
 import '@/App.css';
 
 const API_BASE_URL = window.ENV?.REACT_APP_API_URL || 'http://localhost:8001';
@@ -59,6 +60,7 @@ function App() {
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" />
+      <SyncProgressIndicator />
     </div>
   );
 }

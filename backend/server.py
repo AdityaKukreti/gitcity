@@ -35,6 +35,13 @@ FETCH_INTERVAL = int(os.environ.get('FETCH_INTERVAL_SECONDS', '30'))
 # Global flag to track if initial sync is complete
 initial_sync_complete = False
 background_sync_running = False
+sync_progress = {
+    "total_pipelines": 0,
+    "cached_pipelines": 0,
+    "is_syncing": False,
+    "current_project": "",
+    "started_at": None
+}
 
 app = FastAPI()
 
@@ -954,12 +961,17 @@ async def process_project(project: dict, date_threshold: str):
         return 0
 
 async def sync_gitlab_data():
-    """Background task to sync GitLab data with parallel processing"""
-    global initial_sync_complete
+    """Background task to sync GitLab data with parallel processing - caches 100 pipelines first"""
+    global initial_sync_complete, sync_progress
     
     try:
         start_time = datetime.now(timezone.utc)
-        logger.info("🚀 Starting GitLab data sync (OPTIMIZED)...")
+        sync_progress["is_syncing"] = True
+        sync_progress["started_at"] = start_time.isoformat()
+        sync_progress["cached_pipelines"] = 0
+        sync_progress["total_pipelines"] = 0
+        
+        logger.info("🚀 Starting GitLab data sync (OPTIMIZED - Initial 100 pipelines)...")
         
         # Fetch all projects from the configured namespace
         projects = await gitlab_service.fetch_projects()
@@ -967,6 +979,7 @@ async def sync_gitlab_data():
         if not projects:
             logger.warning(f"No projects found in namespace '{GITLAB_NAMESPACE}'")
             initial_sync_complete = True
+            sync_progress["is_syncing"] = False
             return
         
         # Get enabled projects from settings
@@ -995,28 +1008,79 @@ async def sync_gitlab_data():
             projects_to_fetch = [p for p in projects if p["id"] in enabled_projects]
             logger.info(f"Fetching data for {len(projects_to_fetch)} enabled projects")
         
-        # Process all projects in parallel (with concurrency limit)
-        project_semaphore = asyncio.Semaphore(5)  # Max 5 projects concurrently
+        # Collect all pipelines from all projects first
+        all_pipelines = []
+        for project in projects_to_fetch:
+            project_id = project["id"]
+            project_name = project.get('name', project.get('path', 'Unknown'))
+            sync_progress["current_project"] = project_name
+            
+            try:
+                logger.info(f"📦 Fetching pipelines for: {project_name} (ID: {project_id})")
+                async with API_SEMAPHORE:
+                    pipelines = await gitlab_service.fetch_pipelines(
+                        project_id, 
+                        ref=DEFAULT_BRANCH,
+                        updated_after=date_threshold
+                    )
+                
+                logger.info(f"Found {len(pipelines)} pipelines for {project_name}")
+                
+                # Add project info to each pipeline
+                for pipeline in pipelines:
+                    pipeline['project_id'] = project_id
+                    pipeline['project_name'] = project_name
+                    all_pipelines.append(pipeline)
+            except Exception as e:
+                logger.error(f"Error fetching pipelines for project {project_id}: {e}")
+                continue
         
-        async def process_with_limit(project):
-            async with project_semaphore:
-                return await process_project(project, date_threshold)
+        sync_progress["total_pipelines"] = len(all_pipelines)
+        logger.info(f"📊 Total pipelines to cache: {len(all_pipelines)}")
         
-        project_tasks = [process_with_limit(project) for project in projects_to_fetch]
-        results = await asyncio.gather(*project_tasks, return_exceptions=True)
+        # Cache first 100 pipelines with full job data
+        INITIAL_CACHE_COUNT = 100
+        initial_pipelines = all_pipelines[:INITIAL_CACHE_COUNT]
+        remaining_pipelines = all_pipelines[INITIAL_CACHE_COUNT:]
         
-        # Calculate total pipelines processed
-        total_pipelines = sum(r for r in results if isinstance(r, int))
+        logger.info(f"⚡ Caching initial {len(initial_pipelines)} pipelines with full data...")
+        
+        # Process initial pipelines in parallel
+        pipeline_semaphore = asyncio.Semaphore(10)
+        
+        async def process_with_limit(pipeline):
+            async with pipeline_semaphore:
+                result = await process_pipeline(pipeline, pipeline['project_id'], pipeline['project_name'])
+                if result:
+                    sync_progress["cached_pipelines"] += 1
+                return result
+        
+        initial_tasks = [process_with_limit(pipeline) for pipeline in initial_pipelines]
+        await asyncio.gather(*initial_tasks, return_exceptions=True)
+        
+        logger.info(f"✅ Initial {sync_progress['cached_pipelines']} pipelines cached!")
+        logger.info(f"🎯 Making UI available now - continuing sync in background...")
+        
+        # Make UI available after first 100 pipelines
+        initial_sync_complete = True
+        
+        # Continue caching remaining pipelines in background
+        if remaining_pipelines:
+            logger.info(f"🔄 Continuing to cache {len(remaining_pipelines)} remaining pipelines...")
+            
+            remaining_tasks = [process_with_limit(pipeline) for pipeline in remaining_pipelines]
+            await asyncio.gather(*remaining_tasks, return_exceptions=True)
         
         elapsed_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-        logger.info(f"✅ Sync complete! Processed {total_pipelines} pipelines in {elapsed_time:.1f}s")
-        logger.info(f"⚡ Average: {total_pipelines/elapsed_time:.1f} pipelines/sec")
+        logger.info(f"✅ Full sync complete! Processed {sync_progress['cached_pipelines']} pipelines in {elapsed_time:.1f}s")
+        logger.info(f"⚡ Average: {sync_progress['cached_pipelines']/elapsed_time:.1f} pipelines/sec")
         
-        initial_sync_complete = True
+        sync_progress["is_syncing"] = False
         
     except Exception as e:
         logger.error(f"Error syncing GitLab data: {e}")
         initial_sync_complete = True  # Set to true even on error to prevent blocking
+        sync_progress["is_syncing"] = False
 
 async def continuous_sync():
     """Continuously sync data in the background"""
@@ -1103,6 +1167,18 @@ async def get_sync_status():
         "namespace": GITLAB_NAMESPACE,
         "default_branch": DEFAULT_BRANCH,
         "days_to_fetch": DAYS_TO_FETCH
+    }
+
+@api_router.get("/sync-progress")
+async def get_sync_progress():
+    """Get current sync progress"""
+    return {
+        "total_pipelines": sync_progress["total_pipelines"],
+        "cached_pipelines": sync_progress["cached_pipelines"],
+        "is_syncing": sync_progress["is_syncing"],
+        "current_project": sync_progress["current_project"],
+        "started_at": sync_progress["started_at"],
+        "progress_percent": round((sync_progress["cached_pipelines"] / sync_progress["total_pipelines"] * 100) if sync_progress["total_pipelines"] > 0 else 0, 1)
     }
 
 @api_router.get("/projects", response_model=List[Project])
